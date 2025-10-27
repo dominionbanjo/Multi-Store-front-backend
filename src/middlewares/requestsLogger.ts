@@ -9,19 +9,19 @@ morgan.token("user", (req: Request) => {
   return `${user.name} (${user.userId}, role=${user.role})`;
 });
 
-// Define a Morgan → Winston stream
+// Define Morgan → Winston stream
 const stream = {
   write: (message: string) => logger.http(message.trim()),
 };
 
-// Define the log format
+// Log format
 const format =
   ":method :url :status :res[content-length] - :response-time ms :user";
 
-// Create the actual middleware
+// Middleware
 const requestLogger = morgan(format, {
   stream,
-  skip: () => process.env.NODE_ENV === "test", // skip logs in tests
+  skip: () => process.env.NODE_ENV === "test",
 });
 
 export default requestLogger;

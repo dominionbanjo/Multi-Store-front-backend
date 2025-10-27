@@ -11,6 +11,21 @@ import {
 import crypto from "crypto";
 import { toUTCDate } from "../utils/time/toUTCDate.js";
 
+/** 🧱 Type for creating a new account */
+interface SignUpData {
+  first_name: string;
+  last_name: string;
+  email: string;
+  password: string;
+  phone_number: string;
+  account_type?: string;
+  store_name?: string | null;
+  username?: string | null;
+  referral_code?: string | null;
+  current_sales_channel?: string | null;
+  agree_to_terms?: boolean;
+}
+
 class Accounts {
   /** 🔍 Check if user exists by email */
   static async userExist(email: string) {
@@ -19,19 +34,22 @@ class Accounts {
   }
 
   /** 🧠 Sign up with OTP initialization */
-  static async signUp({
-    first_name,
-    last_name,
-    email,
-    password,
-    phone_number,
-    account_type,
-    store_name,
-    username,
-    referral_code,
-    current_sales_channel,
-    agree_to_terms = true,
-  }: any) {
+  static async signUp(data: SignUpData) {
+    const {
+      first_name,
+      last_name,
+      email,
+      password,
+      phone_number,
+      account_type,
+      store_name,
+      username,
+      referral_code,
+      current_sales_channel,
+      agree_to_terms = true,
+    } = data;
+
+    // ✅ Basic validation
     if (!first_name || !last_name || !email || !password || !phone_number)
       throw new BadRequestError("All required fields must be filled");
 
@@ -47,9 +65,9 @@ class Accounts {
     const id = uuidv4();
     const hash = await hashPassword(password);
 
-    // Generate OTP and set UTC expiration
+    // ✅ Generate OTP and expiration (ISO string)
     const otp = crypto.randomInt(100000, 999999).toString();
-    const otp_expiration = toUTCDate(10); // +10 minutes, UTC ISO string
+    const otp_expiration = toUTCDate(10, true) as string;
 
     await sql`
       INSERT INTO users (
@@ -60,7 +78,7 @@ class Accounts {
       )
       VALUES (
         ${id}, ${first_name}, ${last_name}, ${phone_number}, ${email}, ${hash},
-        ${account_type}, ${store_name || null}, ${username || null},
+        ${account_type || null}, ${store_name || null}, ${username || null},
         ${referral_code || null}, ${current_sales_channel || null},
         ${agree_to_terms}, false, ${otp}, ${otp_expiration}
       )
@@ -105,7 +123,7 @@ class Accounts {
     };
   }
 
-  /** ✅ Verify OTP with detailed logging */
+  /** ✅ Verify OTP */
   static async verifyOtp(email: string, otp: string) {
     const user = await this.userExist(email);
     if (!user) throw new NotFoundError("User not found");
@@ -118,17 +136,12 @@ class Accounts {
       throw new BadRequestError("No OTP was generated for this user");
     if (savedOtp !== inputOtp) throw new BadRequestError("Invalid OTP");
 
-    // Compare time in UTC
-    const expiration = new Date(user.otp_expiration);
-    if (Date.now() > expiration.getTime())
-      throw new BadRequestError("OTP expired");
-
+    const expiration = new Date(String(user.otp_expiration));
     if (isNaN(expiration.getTime()))
       throw new BadRequestError("Stored OTP expiration is invalid");
 
-    if (Date.now() > expiration.getTime()) {
+    if (Date.now() > expiration.getTime())
       throw new BadRequestError("OTP has expired, please request a new one");
-    }
 
     await sql`
       UPDATE users
@@ -147,17 +160,16 @@ class Accounts {
 
     const now = new Date();
 
-    // Rate limit: block frequent resends (within 1 min)
+    // ✅ Prevent resending if previous OTP still valid for >9 min
     if (
       user.otp_expiration &&
-      now < new Date(user.otp_expiration) &&
       new Date(user.otp_expiration).getTime() - now.getTime() > 9 * 60 * 1000
     ) {
       throw new BadRequestError("Please wait before requesting a new OTP");
     }
 
     const otp = crypto.randomInt(100000, 999999).toString();
-    const otp_expiration = toUTCDate(10); // always UTC ISO string
+    const otp_expiration = toUTCDate(10, true) as string;
 
     await sql`
       UPDATE users

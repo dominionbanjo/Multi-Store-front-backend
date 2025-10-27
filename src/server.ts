@@ -2,10 +2,8 @@ import * as dotenv from "dotenv";
 dotenv.config();
 
 import express from "express";
-import morgan from "morgan";
 import sql from "./db/connect.js";
 import helmet from "helmet";
-import xss from "xss";
 import { configureHelmet } from "./utils/security/helmetConfig.js";
 import { configureCors } from "./utils/security/corsConfig.js";
 import { configureRateLimit } from "./utils/security/rateLimitConfig.js";
