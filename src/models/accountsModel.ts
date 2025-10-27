@@ -18,7 +18,7 @@ interface SignUpData {
   email: string;
   password: string;
   phone_number: string;
-  account_type?: string;
+  account_type: string;
   store_name?: string | null;
   username?: string | null;
   referral_code?: string | null;
