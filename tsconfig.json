@@ -14,7 +14,8 @@
     "strictNullChecks": true,
     "strictFunctionTypes": true,
     "skipLibCheck": true,
-    "noEmitOnError": true
+    "noEmitOnError": true,
+    "types": ["node", "multer"]
   },
   "include": ["src/**/*"],
   "exclude": ["client", "node_modules"]
