@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "typeRoots": ["./src/types", "./node_modules/@types"],
     "lib": ["es2023"],
     "module": "ES2022",
     "target": "es2022",
