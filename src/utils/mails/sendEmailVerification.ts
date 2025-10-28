@@ -14,7 +14,7 @@ export const sendEmailVerification = async ({
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 500px; margin: auto; background: #fff; border-radius: 10px; padding: 20px; border: 1px solid #eee;">
       <div style="text-align: center;">
-        <img src="https://yourwebsite.com/logo.png" alt="Logo" width="120" />
+        <img src="https://easystore01.netlify.app/logos/inline-stripe.png" alt="Logo" width="120" />
       </div>
       <h2 style="color: #333; text-align: center;">Verify Your Email Address</h2>
       <p style="color: #555;">Hi <b>${name}</b>,</p>

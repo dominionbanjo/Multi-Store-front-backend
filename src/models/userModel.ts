@@ -1,8 +1,7 @@
-import sql from "../db/connect.js";
+import sql from "../config/connect.js";
 import { NotFoundError, BadRequestError } from "../utils/errors/customError.js";
 
 class User {
-  /** 🧠 Get full non-sensitive profile */
   static async getProfile(id: string) {
     if (!id) throw new BadRequestError("User ID is required");
 
@@ -16,6 +15,8 @@ class User {
         account_type,
         store_name,
         username,
+        avatar,
+        avatar_public_id,
         referral_code,
         current_sales_channel,
         email_verified,
@@ -32,7 +33,6 @@ class User {
     return user;
   }
 
-  /** 🏬 Get all stores owned by this user */
   static async getStores(userId: string) {
     if (!userId) throw new BadRequestError("User ID is required");
 
@@ -51,7 +51,6 @@ class User {
     return result;
   }
 
-  /** 🧾 Get full user + their stores */
   static async getUserWithStore(id: string) {
     if (!id) throw new BadRequestError("User ID is required");
 
@@ -83,11 +82,9 @@ class User {
     return result[0];
   }
 
-  /** ✏️ Update profile fields */
   static async updateProfile(id: string, data: Record<string, any>) {
     if (!id) throw new BadRequestError("User ID is required");
 
-    // Allow only specific fields
     const allowedFields = [
       "first_name",
       "last_name",
@@ -95,6 +92,8 @@ class User {
       "store_name",
       "username",
       "current_sales_channel",
+      "avatar",
+      "avatar_public_id",
     ];
     const filtered: Record<string, any> = {};
     for (const key of allowedFields) {
@@ -114,7 +113,6 @@ class User {
     return updated;
   }
 
-  /** 🏪 Update store info (if multi-store exists) */
   static async updateStore(storeId: string, data: Record<string, any>) {
     if (!storeId) throw new BadRequestError("Store ID is required");
 

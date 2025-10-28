@@ -9,10 +9,9 @@ import {
 import crypto from "crypto";
 import { sendResetPasswordEmail } from "../utils/mails/sendResetPassword.js";
 import createHash from "../utils/auth/createHash.js";
-import sql from "../db/connect.js";
+import sql from "../config/connect.js";
 import { hashPassword } from "../utils/auth/passwordUtil.js";
 
-/** 🧾 Register user */
 export const register = async (req: Request, res: Response): Promise<void> => {
   const body = req.body;
   if (!body) throw new BadRequestError("Please provide all required fields");
@@ -25,13 +24,14 @@ export const register = async (req: Request, res: Response): Promise<void> => {
   });
 
   res.status(StatusCodes.CREATED).json({
-    msg: "User registered successfully",
+    status: 1,
+    success: true,
+    message: "User registered successfully",
     token,
     user,
   });
 };
 
-/** 🔐 Login user */
 export const login = async (req: Request, res: Response): Promise<void> => {
   const { email, password } = req.body;
   if (!email || !password)
@@ -46,7 +46,9 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   });
 
   res.status(StatusCodes.OK).json({
-    msg: "User logged in successfully",
+    status: 1,
+    success: true,
+    message: "User logged in successfully",
     token,
     user: {
       id: user.id,
@@ -63,7 +65,13 @@ export const verifyOtp = async (req: Request, res: Response) => {
     throw new BadRequestError("Please provide both email and OTP");
 
   const result = await Accounts.verifyOtp(email, otp);
-  res.status(StatusCodes.OK).json(result);
+
+  res.status(StatusCodes.OK).json({
+    status: 1,
+    success: true,
+    message: "Email verified successfully",
+    ...result,
+  });
 };
 
 export const resendOtp = async (req: Request, res: Response) => {
@@ -71,7 +79,13 @@ export const resendOtp = async (req: Request, res: Response) => {
   if (!email) throw new BadRequestError("Please provide your email");
 
   const result = await Accounts.resendOtp(email);
-  res.status(StatusCodes.OK).json(result);
+
+  res.status(StatusCodes.OK).json({
+    status: 1,
+    success: true,
+    message: "A new OTP has been sent to your email",
+    ...result,
+  });
 };
 
 export const forgotPassword = async (
@@ -106,12 +120,13 @@ export const forgotPassword = async (
     `;
   }
 
-  res
-    .status(StatusCodes.OK)
-    .json({ msg: "Check your email for the reset password link" });
+  res.status(StatusCodes.OK).json({
+    status: 1,
+    success: true,
+    message: "Check your email for the reset password link",
+  });
 };
 
-/** 🔁 Reset password */
 export const resetPassword = async (
   req: Request,
   res: Response
@@ -140,7 +155,12 @@ export const resetPassword = async (
           password_token_expiration_date = NULL
       WHERE email = ${email}
     `;
-    res.status(StatusCodes.OK).json({ msg: "Password reset successful" });
+
+    res.status(StatusCodes.OK).json({
+      status: 1,
+      success: true,
+      message: "Password reset successful",
+    });
   } else {
     throw new UnauthenticatedError("Invalid or expired token");
   }

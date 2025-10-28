@@ -1,4 +1,4 @@
-import sql from "../db/connect.js";
+import sql from "../config/connect.js";
 import validator from "validator";
 import { v4 as uuidv4 } from "uuid";
 import { hashPassword, comparePassword } from "../utils/auth/passwordUtil.js";
@@ -11,7 +11,6 @@ import {
 import crypto from "crypto";
 import { toUTCDate } from "../utils/time/toUTCDate.js";
 
-/** 🧱 Type for creating a new account */
 interface SignUpData {
   first_name: string;
   last_name: string;
@@ -27,13 +26,11 @@ interface SignUpData {
 }
 
 class Accounts {
-  /** 🔍 Check if user exists by email */
   static async userExist(email: string) {
     const result = await sql`SELECT * FROM users WHERE email = ${email}`;
     return result[0] || null;
   }
 
-  /** 🧠 Sign up with OTP initialization */
   static async signUp(data: SignUpData) {
     const {
       first_name,
@@ -49,7 +46,6 @@ class Accounts {
       agree_to_terms = true,
     } = data;
 
-    // ✅ Basic validation
     if (!first_name || !last_name || !email || !password || !phone_number)
       throw new BadRequestError("All required fields must be filled");
 
@@ -65,7 +61,6 @@ class Accounts {
     const id = uuidv4();
     const hash = await hashPassword(password);
 
-    // ✅ Generate OTP and expiration (ISO string)
     const otp = crypto.randomInt(100000, 999999).toString();
     const otp_expiration = toUTCDate(10, true) as string;
 
@@ -84,7 +79,6 @@ class Accounts {
       )
     `;
 
-    // Send verification email
     await sendEmailVerification({ name: first_name, email, otp });
 
     return {
@@ -98,7 +92,6 @@ class Accounts {
     };
   }
 
-  /** 🔐 Login existing user */
   static async login(email: string, password: string) {
     if (!email || !password)
       throw new BadRequestError("Please provide email and password");
@@ -123,7 +116,6 @@ class Accounts {
     };
   }
 
-  /** ✅ Verify OTP */
   static async verifyOtp(email: string, otp: string) {
     const user = await this.userExist(email);
     if (!user) throw new NotFoundError("User not found");
@@ -152,7 +144,6 @@ class Accounts {
     return { msg: "Email verified successfully" };
   }
 
-  /** 🔁 Resend OTP */
   static async resendOtp(email: string) {
     const user = await this.userExist(email);
     if (!user) throw new NotFoundError("User not found");
@@ -160,7 +151,6 @@ class Accounts {
 
     const now = new Date();
 
-    // ✅ Prevent resending if previous OTP still valid for >9 min
     if (
       user.otp_expiration &&
       new Date(user.otp_expiration).getTime() - now.getTime() > 9 * 60 * 1000

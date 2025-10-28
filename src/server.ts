@@ -3,17 +3,25 @@ import * as dotenv from "dotenv";
 dotenv.config();
 
 import express from "express";
-import sql from "./db/connect.js";
+import sql from "./config/connect.js";
 import helmet from "helmet";
 import { configureHelmet } from "./utils/security/helmetConfig.js";
 import { configureCors } from "./utils/security/corsConfig.js";
 import { configureRateLimit } from "./utils/security/rateLimitConfig.js";
 import morgan from "morgan";
 import { sanitizeInput } from "./middlewares/sanitizeInputs.js";
+import cloudinary from "cloudinary";
 
 // Routers
 import userRouter from "./routes/userRoutes.js";
 import authRouter from "./routes/authRoutes.js";
+
+// CLOUDINARY CONFIG
+cloudinary.v2.config({
+  cloud_name: process.env.CLOUD_NAME as string,
+  api_key: process.env.CLOUD_API_KEY as string,
+  api_secret: process.env.CLOUD_API_SECRET as string,
+});
 
 // Middlewares
 import errorHandlerMiddleWare from "./middlewares/errorHandlerMiddleWare.js";
