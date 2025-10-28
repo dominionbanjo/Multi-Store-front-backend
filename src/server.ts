@@ -18,6 +18,7 @@ import authRouter from "./routes/authRoutes.js";
 import errorHandlerMiddleWare from "./middlewares/errorHandlerMiddleWare.js";
 
 const app = express();
+app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
 //SECURITY MIDDLEWARE
