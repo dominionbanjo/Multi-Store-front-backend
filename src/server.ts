@@ -7,7 +7,7 @@ import helmet from "helmet";
 import { configureHelmet } from "./utils/security/helmetConfig.js";
 import { configureCors } from "./utils/security/corsConfig.js";
 import { configureRateLimit } from "./utils/security/rateLimitConfig.js";
-import requestLogger from "./middlewares/requestsLogger.js";
+import morgan from "morgan";
 import { sanitizeInput } from "./middlewares/sanitizeInputs.js";
 
 // Routers
@@ -30,7 +30,7 @@ app.use(configureRateLimit());
 // Middleware
 app.use(express.json());
 // app.use(morgan("dev"));
-app.use(requestLogger);
+app.use(morgan("dev"));
 
 // Routes
 app.use("/api/v1/auth", authRouter);
