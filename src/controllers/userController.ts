@@ -8,7 +8,6 @@ import {
   BadRequestError,
 } from "../utils/errors/customError.js";
 
-/** Extend Express Request to include user + file */
 interface CustomRequest extends Request {
   user?: {
     userId: string;
@@ -18,7 +17,6 @@ interface CustomRequest extends Request {
   file?: Express.Multer.File;
 }
 
-/** 🧠 Get current logged-in user */
 export const getCurrentUser = async (
   req: CustomRequest,
   res: Response
@@ -35,7 +33,6 @@ export const getCurrentUser = async (
   });
 };
 
-/** ✏️ Update user profile */
 export const updateUser = async (
   req: CustomRequest,
   res: Response
@@ -46,16 +43,21 @@ export const updateUser = async (
   const userId = req.user.userId;
   const updateData: Record<string, any> = { ...req.body };
 
-  // ✅ Handle avatar upload
+  const existingUser = await User.getProfile(userId);
+
   if (req.file) {
     const fileStr = formatImage(req.file);
     const uploaded = await cloudinary.v2.uploader.upload(fileStr, {
       use_filename: true,
-      folder: "users",
+      folder: "easystore",
     });
 
     updateData.avatar = uploaded.secure_url;
     updateData.avatar_public_id = uploaded.public_id;
+
+    if (existingUser?.avatar_public_id) {
+      await cloudinary.v2.uploader.destroy(existingUser.avatar_public_id);
+    }
   }
 
   const updatedUser = await User.updateProfile(userId, updateData);
@@ -67,7 +69,6 @@ export const updateUser = async (
   });
 };
 
-/** 🏬 Get all stores belonging to a user */
 export const getUserStores = async (
   req: CustomRequest,
   res: Response
@@ -84,7 +85,6 @@ export const getUserStores = async (
   });
 };
 
-/** 🏪 Update a specific store */
 export const updateUserStore = async (
   req: CustomRequest,
   res: Response

@@ -1,6 +1,6 @@
 import { body } from "express-validator";
 import { withValidationErrors } from "../../middlewares/withValidationErrors.js";
-import sql from "../../db/connect.js";
+import sql from "../../config/connect.js";
 
 export const validateCreateStoreInput = withValidationErrors([
   body("store_name")
