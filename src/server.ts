@@ -15,6 +15,8 @@ import cloudinary from "cloudinary";
 // Routers
 import userRouter from "./routes/userRoutes.js";
 import authRouter from "./routes/authRoutes.js";
+import cartRouter from "./routes/cartRoutes.js";
+import wishlistRouter from "./routes/wishlistRoutes.js";
 
 // CLOUDINARY CONFIG
 cloudinary.v2.config({
@@ -45,6 +47,8 @@ app.use(morgan("dev"));
 // Routes
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/users", userRouter);
+app.use("/api/v1/cart", cartRouter);
+app.use("/api/v1/wishlist", wishlistRouter);
 
 // ✅ Test route
 app.get("/", async (_req, res) => {

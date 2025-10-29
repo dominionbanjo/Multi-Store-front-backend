@@ -64,6 +64,15 @@ class Accounts {
     const otp = crypto.randomInt(100000, 999999).toString();
     const otp_expiration = toUTCDate(10, true) as string;
 
+    if (
+      current_sales_channel &&
+      !["WhatsApp", "Instagram", "Facebook", "TikTok", "Other"].includes(
+        current_sales_channel
+      )
+    ) {
+      throw new BadRequestError("Invalid sales channel");
+    }
+
     await sql`
       INSERT INTO users (
         id, first_name, last_name, phone_number, email, password,
