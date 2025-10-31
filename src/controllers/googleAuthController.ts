@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import { createJWT } from "../utils/auth/tokenUtil.js";
 import { BadRequestError } from "../utils/errors/customError.js";
-import Accounts from "../models/accountsModel.js";
+import Accounts from "../services/accountsService.js";
 
 export const continueWithGoogle = async (req: Request, res: Response) => {
   const { token } = req.body;

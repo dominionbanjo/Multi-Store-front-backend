@@ -1,6 +1,8 @@
-import sql from "../config/connect.js";
 import validator from "validator";
 import { v4 as uuidv4 } from "uuid";
+import crypto from "crypto";
+import { OAuth2Client } from "google-auth-library";
+
 import { hashPassword, comparePassword } from "../utils/auth/passwordUtil.js";
 import { sendEmailVerification } from "../utils/mails/sendEmailVerification.js";
 import {
@@ -8,9 +10,9 @@ import {
   UnauthenticatedError,
   NotFoundError,
 } from "../utils/errors/customError.js";
-import crypto from "crypto";
 import { toUTCDate } from "../utils/time/toUTCDate.js";
-import { OAuth2Client } from "google-auth-library";
+// import { UserModel } from "../models/UserModel";
+import { UserModel } from "../config/db/models/UserModel.js";
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -29,17 +31,17 @@ interface SignUpData {
 }
 
 class Accounts {
-  // ───────────────────────────────
-  // Utility: Find user by email
-  // ───────────────────────────────
+  /** ───────────────────────────────
+   * Utility: Find user by email
+   * ─────────────────────────────── */
   static async userExist(email: string) {
-    const result = await sql`SELECT * FROM users WHERE email = ${email}`;
-    return result[0] || null;
+    const user = await UserModel.findOne({ email });
+    return user;
   }
 
-  // ───────────────────────────────
-  // Normal signup (password)
-  // ───────────────────────────────
+  /** ───────────────────────────────
+   * Normal signup (password)
+   * ─────────────────────────────── */
   static async signUp(data: SignUpData) {
     const {
       first_name,
@@ -55,6 +57,7 @@ class Accounts {
       agree_to_terms = true,
     } = data;
 
+    // Validation
     if (!first_name || !last_name || !email || !password)
       throw new BadRequestError("All required fields must be filled");
 
@@ -67,27 +70,32 @@ class Accounts {
     const existing = await this.userExist(email);
     if (existing) throw new BadRequestError("User already exists");
 
+    // Prepare user data
     const id = uuidv4();
     const hash = await hashPassword(password);
     const otp = crypto.randomInt(100000, 999999).toString();
     const otp_expiration = toUTCDate(10, true) as string;
 
-    await sql`
-      INSERT INTO users (
-        id, first_name, last_name, phone_number, email, password,
-        account_type, store_name, username, referral_code,
-        current_sales_channel, agree_to_terms,
-        email_verified, otp, otp_expiration, signup_medium
-      )
-      VALUES (
-        ${id}, ${first_name}, ${last_name}, ${
-      phone_number || null
-    }, ${email}, ${hash},
-        ${account_type || "user"}, ${store_name || null}, ${username || null},
-        ${referral_code || null}, ${current_sales_channel || null},
-        ${agree_to_terms}, false, ${otp}, ${otp_expiration}, 'signed'
-      )
-    `;
+    const user = await UserModel.create({
+      id,
+      first_name,
+      last_name,
+      phone_number: phone_number || null,
+      email,
+      password: hash,
+      account_type: account_type || "user",
+      store_name,
+      username,
+      referral_code,
+      current_sales_channel,
+      agree_to_terms,
+      email_verified: false,
+      otp,
+      otp_expiration,
+      signup_medium: "signed",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
 
     await sendEmailVerification({ name: first_name, email, otp });
 
@@ -102,6 +110,9 @@ class Accounts {
     };
   }
 
+  /** ───────────────────────────────
+   * Login with password
+   * ─────────────────────────────── */
   static async login(email: string, password?: string) {
     if (!email) throw new BadRequestError("Please provide email");
 
@@ -111,24 +122,22 @@ class Accounts {
     );
     if (!user) throw genericError;
 
-    // ── Google user login ──
     if (user.signup_medium === "google") {
-      throw new BadRequestError("This account is on google sign in only");
+      throw new BadRequestError("This account is Google Sign-In only");
     }
 
-    // ── Normal login ──
     if (!password) throw genericError;
-    const match = await comparePassword(password, user.password);
+    const match = await comparePassword(password, user.password || "");
     if (!match) throw genericError;
 
-    // ⚠️ If email not verified, return user instead of throwing
-    if (!user.email_verified) {
-      return { ...user, email_verified: false };
-    }
+    if (!user.email_verified) return { ...user, email_verified: false };
 
     return user;
   }
 
+  /** ───────────────────────────────
+   * Google Sign-In / Continue
+   * ─────────────────────────────── */
   static async continueWithGoogle(token: string) {
     if (!token) throw new BadRequestError("Missing Google token");
 
@@ -146,29 +155,29 @@ class Accounts {
       throw new BadRequestError("Google account has no name information");
 
     const [first_name, last_name] = name.trim().split(" ");
-    const existing = await this.userExist(email);
-    let user = existing;
+    let user = await this.userExist(email);
 
     if (!user) {
       const id = uuidv4();
-      await sql`
-        INSERT INTO users (
-          id, first_name, last_name, email, email_verified,
-          account_type, avatar, agree_to_terms, signup_medium
-        )
-        VALUES (
-          ${id}, ${first_name}, ${last_name}, ${email},
-          ${email_verified ?? true}, 'user',
-          ${picture || null}, true, 'google'
-        )
-      `;
-      const result = await sql`SELECT * FROM users WHERE id = ${id}`;
-      user = result[0];
+      user = await UserModel.create({
+        id,
+        first_name,
+        last_name,
+        email,
+        email_verified: email_verified ?? true,
+        account_type: "user",
+        avatar: picture || null,
+        agree_to_terms: true,
+        signup_medium: "google",
+      });
     }
 
     return user;
   }
 
+  /** ───────────────────────────────
+   * Verify OTP
+   * ─────────────────────────────── */
   static async verifyOtp(email: string, otp: string) {
     const user = await this.userExist(email);
     if (!user) throw new NotFoundError("User not found");
@@ -181,15 +190,18 @@ class Accounts {
     if (Date.now() > expiration.getTime())
       throw new BadRequestError("OTP has expired");
 
-    await sql`
-      UPDATE users
-      SET email_verified = true, otp = NULL, otp_expiration = NULL
-      WHERE email = ${email}
-    `;
+    await UserModel.update(user.id, {
+      email_verified: true,
+      otp: null,
+      otp_expiration: null,
+    });
 
     return { msg: "Email verified successfully" };
   }
 
+  /** ───────────────────────────────
+   * Resend OTP
+   * ─────────────────────────────── */
   static async resendOtp(email: string) {
     const user = await this.userExist(email);
     if (!user) throw new NotFoundError("User not found");
@@ -208,12 +220,7 @@ class Accounts {
     const otp = crypto.randomInt(100000, 999999).toString();
     const otp_expiration = toUTCDate(10, true) as string;
 
-    await sql`
-      UPDATE users
-      SET otp = ${otp}, otp_expiration = ${otp_expiration}
-      WHERE email = ${email}
-    `;
-
+    await UserModel.update(user.id, { otp, otp_expiration });
     await sendEmailVerification({ name: user.first_name, email, otp });
 
     return { msg: "A new OTP has been sent to your email" };

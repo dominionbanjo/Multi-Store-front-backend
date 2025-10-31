@@ -1,5 +1,6 @@
 import postgres from "postgres";
 import dotenv from "dotenv";
+import { syncModels } from "./db/modelRegistry";
 dotenv.config();
 
 const connectionString = process.env.DATABASE_URL!;
@@ -10,7 +11,7 @@ if (!connectionString) {
 }
 
 /**
- * Attempts to connect to Postgres with retry support.
+ * Attempts to connect to PostgreSQL with retry support and model sync.
  */
 async function connectWithRetry(
   retries = 5,
@@ -32,7 +33,12 @@ async function connectWithRetry(
       // Simple test query
       await sql`SELECT NOW()`;
 
-      console.log("✅ Connected to PostgreSQL database successfully");
+      console.log("✅ Connected to PostgreSQL successfully");
+
+      // ✅ Run syncModels once connection succeeds
+      await syncModels();
+      console.log("🧩 Models synced successfully after connection");
+
       return sql;
     } catch (err) {
       console.error(
@@ -46,13 +52,13 @@ async function connectWithRetry(
         await new Promise((resolve) => setTimeout(resolve, backoff));
       } else {
         console.error(
-          "❌ All connection attempts failed. Server will not exit but retry in background."
+          "❌ All connection attempts failed. Will retry indefinitely..."
         );
       }
     }
   }
 
-  // Keep retrying every 10s until success
+  // Continuous retry fallback
   console.log("🔁 Entering continuous retry mode...");
   while (true) {
     try {
@@ -64,7 +70,12 @@ async function connectWithRetry(
       });
 
       await sql`SELECT NOW()`;
-      console.log("✅ Reconnected to PostgreSQL database successfully");
+      console.log("✅ Reconnected to PostgreSQL successfully");
+
+      // ✅ Run syncModels after successful reconnection
+      await syncModels();
+      console.log("🧩 Models re-synced successfully");
+
       return sql;
     } catch (err) {
       console.error("⚠️ Retry failed, trying again in 10s...");
