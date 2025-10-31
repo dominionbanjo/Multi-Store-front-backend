@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
-import Cart from "../models/cartModel.js";
+import Cart from "../services/cartService.js";
 import {
   BadRequestError,
   UnauthenticatedError,

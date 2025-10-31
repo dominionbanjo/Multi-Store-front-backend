@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import cloudinary from "cloudinary";
-import User from "../models/userModel.js";
+import User from "../services/userService.js";
 import { formatImage } from "../utils/images/multer.js";
 import {
   UnauthenticatedError,
