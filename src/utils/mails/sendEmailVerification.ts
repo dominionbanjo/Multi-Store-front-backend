@@ -22,7 +22,7 @@ export const sendEmailVerification = async ({
       <div style="text-align: center; font-size: 24px; font-weight: bold; color: #007bff; letter-spacing: 4px; margin: 20px 0;">
         ${otp}
       </div>
-      <p style="color: #777;">If you didn’t request this, please ignore this email.</p>
+      <p style="color: #777; text-align: center;">If you didn’t request this, please ignore this email.</p>
       <p style="font-size: 12px; color: #999; text-align: center;">© ${new Date().getFullYear()} EasyStore. All rights reserved.</p>
     </div>
   `;

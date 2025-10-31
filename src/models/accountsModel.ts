@@ -156,7 +156,8 @@ class Accounts {
   static async resendOtp(email: string) {
     const user = await this.userExist(email);
     if (!user) throw new NotFoundError("User not found");
-    if (user.email_verified) return { msg: "Email already verified" };
+    if (user.email_verified)
+      throw new BadRequestError("Email already verified");
 
     const now = new Date();
 

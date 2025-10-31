@@ -53,11 +53,10 @@ app.use("/api/v1/wishlist", wishlistRouter);
 // ✅ Test route
 app.get("/", async (_req, res) => {
   try {
-    const result = await sql`SELECT NOW()`;
-    res.json({ message: "Server running", dbTime: result[0].now });
+    res.json({ message: "Server running" });
   } catch (error) {
-    console.error("❌ Database error:", error);
-    res.status(500).json({ error: "Database connection error" });
+    console.error("❌ Server error:", error);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
