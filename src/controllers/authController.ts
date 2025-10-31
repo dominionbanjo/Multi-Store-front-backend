@@ -39,6 +39,23 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
   const user = await Accounts.login(email, password);
 
+  // 🔹 If user not verified — send flag but no token
+  if (!user.email_verified) {
+    res.status(StatusCodes.UNAUTHORIZED).json({
+      status: 0,
+      success: false,
+      message: "Email not verified. Please verify your email to continue.",
+      user: {
+        id: user.id,
+        email: user.email,
+        first_name: user.first_name,
+        last_name: user.last_name,
+      },
+      requires_verification: true,
+    });
+  }
+
+  // 🔹 Otherwise continue normally
   const token = createJWT({
     userId: user.id,
     name: user.first_name,
@@ -50,12 +67,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     success: true,
     message: "User logged in successfully",
     token,
-    user: {
-      id: user.id,
-      name: user.first_name,
-      email: user.email,
-      account_type: user.account_type,
-    },
+    user,
   });
 };
 

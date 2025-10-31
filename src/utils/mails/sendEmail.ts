@@ -23,13 +23,12 @@ export const sendEmail = async ({ to, subject, html }: SendEmailOptions) => {
 
     const receivers = [{ email: to }];
 
-    const response = await tranEmailApi.sendTransacEmail({
+    await tranEmailApi.sendTransacEmail({
       sender,
       to: receivers,
       subject,
       htmlContent: html,
     });
-    console.log("✅ Email API response:", response);
 
     console.log(`✅ Email sent successfully to ${to}`);
   } catch (error: any) {

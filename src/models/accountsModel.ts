@@ -10,13 +10,16 @@ import {
 } from "../utils/errors/customError.js";
 import crypto from "crypto";
 import { toUTCDate } from "../utils/time/toUTCDate.js";
+import { OAuth2Client } from "google-auth-library";
+
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 interface SignUpData {
   first_name: string;
   last_name: string;
   email: string;
   password: string;
-  phone_number: string;
+  phone_number?: string | null;
   account_type: string;
   store_name?: string | null;
   username?: string | null;
@@ -26,11 +29,17 @@ interface SignUpData {
 }
 
 class Accounts {
+  // ───────────────────────────────
+  // Utility: Find user by email
+  // ───────────────────────────────
   static async userExist(email: string) {
     const result = await sql`SELECT * FROM users WHERE email = ${email}`;
     return result[0] || null;
   }
 
+  // ───────────────────────────────
+  // Normal signup (password)
+  // ───────────────────────────────
   static async signUp(data: SignUpData) {
     const {
       first_name,
@@ -46,7 +55,7 @@ class Accounts {
       agree_to_terms = true,
     } = data;
 
-    if (!first_name || !last_name || !email || !password || !phone_number)
+    if (!first_name || !last_name || !email || !password)
       throw new BadRequestError("All required fields must be filled");
 
     if (!validator.isEmail(email))
@@ -60,31 +69,23 @@ class Accounts {
 
     const id = uuidv4();
     const hash = await hashPassword(password);
-
     const otp = crypto.randomInt(100000, 999999).toString();
     const otp_expiration = toUTCDate(10, true) as string;
-
-    if (
-      current_sales_channel &&
-      !["WhatsApp", "Instagram", "Facebook", "TikTok", "Other"].includes(
-        current_sales_channel
-      )
-    ) {
-      throw new BadRequestError("Invalid sales channel");
-    }
 
     await sql`
       INSERT INTO users (
         id, first_name, last_name, phone_number, email, password,
         account_type, store_name, username, referral_code,
         current_sales_channel, agree_to_terms,
-        email_verified, otp, otp_expiration
+        email_verified, otp, otp_expiration, signup_medium
       )
       VALUES (
-        ${id}, ${first_name}, ${last_name}, ${phone_number}, ${email}, ${hash},
-        ${account_type || null}, ${store_name || null}, ${username || null},
+        ${id}, ${first_name}, ${last_name}, ${
+      phone_number || null
+    }, ${email}, ${hash},
+        ${account_type || "user"}, ${store_name || null}, ${username || null},
         ${referral_code || null}, ${current_sales_channel || null},
-        ${agree_to_terms}, false, ${otp}, ${otp_expiration}
+        ${agree_to_terms}, false, ${otp}, ${otp_expiration}, 'signed'
       )
     `;
 
@@ -96,14 +97,13 @@ class Accounts {
       last_name,
       email,
       account_type,
-      created: true,
       email_verified: false,
+      signup_medium: "signed",
     };
   }
 
-  static async login(email: string, password: string) {
-    if (!email || !password)
-      throw new BadRequestError("Please provide email and password");
+  static async login(email: string, password?: string) {
+    if (!email) throw new BadRequestError("Please provide email");
 
     const user = await this.userExist(email);
     const genericError = new UnauthenticatedError(
@@ -111,18 +111,62 @@ class Accounts {
     );
     if (!user) throw genericError;
 
+    // ── Google user login ──
+    if (user.signup_medium === "google") {
+      throw new BadRequestError("This account is on google sign in only");
+    }
+
+    // ── Normal login ──
+    if (!password) throw genericError;
     const match = await comparePassword(password, user.password);
     if (!match) throw genericError;
 
-    if (!user.email_verified)
-      throw new UnauthenticatedError("Please verify your email first");
+    // ⚠️ If email not verified, return user instead of throwing
+    if (!user.email_verified) {
+      return { ...user, email_verified: false };
+    }
 
-    return {
-      id: user.id,
-      first_name: user.first_name,
-      email: user.email,
-      account_type: user.account_type,
-    };
+    return user;
+  }
+
+  static async continueWithGoogle(token: string) {
+    if (!token) throw new BadRequestError("Missing Google token");
+
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    if (!payload) throw new BadRequestError("Invalid Google token");
+
+    const { email, name, picture, email_verified } = payload;
+    if (!email) throw new BadRequestError("Google account has no email");
+    if (!name)
+      throw new BadRequestError("Google account has no name information");
+
+    const [first_name, last_name] = name.trim().split(" ");
+    const existing = await this.userExist(email);
+    let user = existing;
+
+    if (!user) {
+      const id = uuidv4();
+      await sql`
+        INSERT INTO users (
+          id, first_name, last_name, email, email_verified,
+          account_type, avatar, agree_to_terms, signup_medium
+        )
+        VALUES (
+          ${id}, ${first_name}, ${last_name}, ${email},
+          ${email_verified ?? true}, 'user',
+          ${picture || null}, true, 'google'
+        )
+      `;
+      const result = await sql`SELECT * FROM users WHERE id = ${id}`;
+      user = result[0];
+    }
+
+    return user;
   }
 
   static async verifyOtp(email: string, otp: string) {
@@ -130,19 +174,12 @@ class Accounts {
     if (!user) throw new NotFoundError("User not found");
     if (user.email_verified) return { msg: "Email already verified" };
 
-    const savedOtp = String(user.otp || "").trim();
-    const inputOtp = String(otp).trim();
-
-    if (!savedOtp)
-      throw new BadRequestError("No OTP was generated for this user");
-    if (savedOtp !== inputOtp) throw new BadRequestError("Invalid OTP");
+    if (String(user.otp).trim() !== String(otp).trim())
+      throw new BadRequestError("Invalid OTP");
 
     const expiration = new Date(String(user.otp_expiration));
-    if (isNaN(expiration.getTime()))
-      throw new BadRequestError("Stored OTP expiration is invalid");
-
     if (Date.now() > expiration.getTime())
-      throw new BadRequestError("OTP has expired, please request a new one");
+      throw new BadRequestError("OTP has expired");
 
     await sql`
       UPDATE users
