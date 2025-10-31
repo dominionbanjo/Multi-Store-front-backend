@@ -1,6 +1,6 @@
 import postgres from "postgres";
 import dotenv from "dotenv";
-import { syncModels } from "./db/modelRegistry";
+import { syncModels } from "./db/modelRegistry.js";
 dotenv.config();
 
 const connectionString = process.env.DATABASE_URL!;
