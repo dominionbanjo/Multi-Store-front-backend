@@ -7,21 +7,33 @@ export const UserModel = defineModel({
     id: { type: "UUID", primaryKey: true },
     first_name: { type: "VARCHAR(100)", notNull: true },
     last_name: { type: "VARCHAR(100)", notNull: true },
+    phone_number: { type: "VARCHAR(20)" },
     email: { type: "VARCHAR(255)", unique: true, notNull: true },
     password: { type: "TEXT" },
-    phone_number: { type: "VARCHAR(20)" },
     account_type: { type: "VARCHAR(20)", default: "'user'", notNull: true },
     store_name: { type: "VARCHAR(100)" },
     username: { type: "VARCHAR(100)" },
-    avatar: { type: "TEXT" },
-    avatar_public_id: { type: "TEXT" },
     referral_code: { type: "VARCHAR(50)" },
     current_sales_channel: { type: "VARCHAR(50)" },
     agree_to_terms: { type: "BOOLEAN", default: "true" },
+
+    // 🔒 Email verification + password reset
+    password_token: { type: "VARCHAR(255)" },
+    password_token_expiration_date: { type: "TIMESTAMP" },
     email_verified: { type: "BOOLEAN", default: "false" },
+    email_verification_code: { type: "VARCHAR(255)" },
+    email_verification_expiration: { type: "TIMESTAMP" },
+
+    // 🔢 OTP and signup
     otp: { type: "VARCHAR(10)" },
-    otp_expiration: { type: "TIMESTAMP" },
+    otp_expiration: { type: "TIMESTAMPTZ" },
     signup_medium: { type: "VARCHAR(20)", default: "'signed'" },
+
+    // 🖼️ Media
+    avatar: { type: "TEXT" },
+    avatar_public_id: { type: "TEXT" },
+
+    // 🕓 Timestamps
     created_at: { type: "TIMESTAMP", default: "NOW()" },
     updated_at: { type: "TIMESTAMP", default: "NOW()" },
   },
