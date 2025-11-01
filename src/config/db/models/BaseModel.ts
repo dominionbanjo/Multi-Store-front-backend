@@ -1,8 +1,8 @@
-import sql from "../../config/connect.js";
+import sql from "../../connect.js";
 import {
   BadRequestError,
   NotFoundError,
-} from "../../utils/errors/customError.js";
+} from "../../../utils/errors/customError.js";
 
 /**
  * 🧩 Generic BaseModel with helper CRUD operations — safe for postgres driver
@@ -15,17 +15,23 @@ export abstract class BaseModel<T extends Record<string, any>> {
     if (!data || Object.keys(data).length === 0)
       throw new BadRequestError("No data provided");
 
-    const keys = Object.keys(data);
-    const values = Object.values(data);
+    // 🔒 Normalize undefined → null (Postgres-safe)
+    const entries = Object.entries(data).map(([key, value]) => [
+      key,
+      value === undefined ? null : value,
+    ]);
+
+    const keys = entries.map(([k]) => k);
+    const values = entries.map(([_, v]) => v);
 
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(", ");
     const columns = keys.join(", ");
 
     const query = `
-      INSERT INTO ${this.table} (${columns})
-      VALUES (${placeholders})
-      RETURNING *
-    `;
+    INSERT INTO ${this.table} (${columns})
+    VALUES (${placeholders})
+    RETURNING *
+  `;
 
     const [row] = await sql.unsafe<T[]>(query, values);
     return row;
