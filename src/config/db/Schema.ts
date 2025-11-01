@@ -10,7 +10,7 @@ export const UserModel = defineModel({
     email: { type: "VARCHAR(255)", unique: true, notNull: true },
     password: { type: "TEXT" },
     phone_number: { type: "VARCHAR(20)" },
-    account_type: { type: "VARCHAR(20)", default: "'user'" },
+    account_type: { type: "VARCHAR(20)", default: "'user'", notNull: true },
     store_name: { type: "VARCHAR(100)" },
     username: { type: "VARCHAR(100)" },
     avatar: { type: "TEXT" },

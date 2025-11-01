@@ -3,7 +3,6 @@ import * as dotenv from "dotenv";
 dotenv.config();
 
 import express from "express";
-import sql from "./config/connect.js";
 import helmet from "helmet";
 import { configureHelmet } from "./utils/security/helmetConfig.js";
 import { configureCors } from "./utils/security/corsConfig.js";

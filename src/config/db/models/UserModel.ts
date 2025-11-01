@@ -1,4 +1,4 @@
-import { BaseModel } from "../BaseModel.js";
+import { BaseModel } from "./BaseModel.js";
 
 export interface IUser {
   id: string;
