@@ -50,13 +50,8 @@ app.use("/api/v1/cart", cartRouter);
 app.use("/api/v1/wishlist", wishlistRouter);
 
 // ✅ Test route
-app.get("/", async (_req, res) => {
-  try {
-    res.json({ message: "Server running" });
-  } catch (error) {
-    console.error("❌ Server error:", error);
-    res.status(500).json({ error: "Server error" });
-  }
+app.get("/test", async (_req, res) => {
+  res.json({ message: "Server running" });
 });
 
 // Global error handler
