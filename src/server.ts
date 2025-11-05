@@ -50,7 +50,7 @@ app.use("/api/v1/cart", cartRouter);
 app.use("/api/v1/wishlist", wishlistRouter);
 
 // ✅ Test route
-app.head("/test", async (_req, res) => {
+app.get("/test", async (_req, res) => {
   res.json({ message: "Server running" });
 });
 
