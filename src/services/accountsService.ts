@@ -13,17 +13,24 @@ import {
   UnauthenticatedError,
   NotFoundError,
 } from "../utils/errors/customError.js";
-import { UserModel } from "../config/db/models/UserModel.js";
+
+import { UserModel, type IUser } from "../config/db/models/UserModel.js";
+import { StoreModel, type IStore } from "../config/db/models/StoreModel.js";
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-/**
- * Core service for all account-related logic:
- * - Registration / Login
- * - Google sign-in
- * - OTP verification & resending
- * - Password reset workflow
- */
+// Allowed enums
+const ALLOWED_ACCOUNT_TYPES = new Set(["user", "vendor"] as const);
+const ALLOWED_SALES_CHANNELS = new Set([
+  "whatsapp",
+  "instagram",
+  "facebook",
+  "tiktok",
+  "other",
+] as const);
+
+type SalesChannel = "whatsapp" | "instagram" | "facebook" | "tiktok" | "other";
+
 class Accounts {
   /** 🔍 Utility: Find user by email */
   static async userExist(email: string) {
@@ -40,13 +47,13 @@ class Accounts {
     last_name: string;
     email: string;
     password: string;
-    phone_number?: string | null;
+    phone_number: string | null;
     account_type: string;
-    store_name?: string | null;
-    username?: string | null;
-    referral_code?: string | null;
-    current_sales_channel?: string | null;
-    agree_to_terms?: boolean;
+    store_name: string | null;
+    username: string | null;
+    referral_code: string | null;
+    current_sales_channel: string | null;
+    agree_to_terms: boolean;
   }) {
     const {
       first_name,
@@ -54,15 +61,15 @@ class Accounts {
       email,
       password,
       phone_number,
-      account_type,
-      store_name,
-      username,
-      referral_code,
-      current_sales_channel,
+      account_type = "user",
+      store_name = null,
+      username = null,
+      referral_code = null,
+      current_sales_channel = null,
       agree_to_terms = true,
     } = data;
 
-    // ✅ Validation
+    // ✅ Basic validation
     if (!first_name || !last_name || !email || !password)
       throw new BadRequestError("All required fields must be filled");
 
@@ -72,38 +79,104 @@ class Accounts {
     if (!validator.isStrongPassword(password))
       throw new BadRequestError("Password not strong enough");
 
+    if (!ALLOWED_ACCOUNT_TYPES.has(account_type as any))
+      throw new BadRequestError("Invalid account type");
+
     const existing = await this.userExist(email);
     if (existing) throw new BadRequestError("User already exists");
 
-    // ✅ Create user
+    // ✅ Normalize and validate current_sales_channel
+    let salesChannel: SalesChannel | null = null;
+    if (current_sales_channel) {
+      const normalized = current_sales_channel.trim().toLowerCase();
+      if (!ALLOWED_SALES_CHANNELS.has(normalized as SalesChannel)) {
+        throw new BadRequestError("Invalid sales channel");
+      }
+      salesChannel = normalized as SalesChannel;
+    }
+
+    // ✅ Create user (with nullable store_id)
     const id = uuidv4();
     const hash = await hashPassword(password);
     const otp = crypto.randomInt(100000, 999999).toString();
     const otp_expiration = toUTCDate(10, true) as string;
 
-    const user = await UserModel.create({
+    const createdAt = new Date().toISOString();
+    const updatedAt = createdAt;
+
+    const userPayload: Partial<IUser> = {
       id,
       first_name,
       last_name,
-      phone_number: phone_number || null,
+      phone_number: phone_number ?? null,
       email,
       password: hash,
-      account_type: account_type || "user",
-      store_name: store_name || null,
-      username: username || null,
-      referral_code: referral_code || null,
-      current_sales_channel: current_sales_channel || null,
-      agree_to_terms,
+      account_type: account_type as "user" | "vendor",
+      store_id: null,
+      store_name: null,
+      username: username ?? null,
+      referral_code: referral_code ?? null,
+      current_sales_channel: salesChannel,
+      agree_to_terms: agree_to_terms ?? true,
       email_verified: false,
       otp,
       otp_expiration,
       signup_medium: "signed",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
+      created_at: createdAt,
+      updated_at: updatedAt,
+    };
 
+    const user = await UserModel.create(userPayload);
+
+    // ───────────────────────────────────────────────
+    // 🏬 If vendor — create store and link it
+    // ───────────────────────────────────────────────
+    if (account_type === "vendor") {
+      if (!store_name || !username) {
+        await UserModel.delete(user.id);
+        throw new BadRequestError(
+          "Vendors must provide store_name and username during signup"
+        );
+      }
+
+      try {
+        const storeId = uuidv4();
+        const storePayload: Partial<IStore> = {
+          id: storeId,
+          user_id: user.id,
+          store_name,
+          username,
+          description: null,
+          logo: null,
+          cover_image: null,
+          rating_average: 0,
+          rating_count: 0,
+          category_ids: null,
+          created_at: createdAt,
+          updated_at: updatedAt,
+        };
+
+        const store = await StoreModel.create(storePayload);
+
+        await UserModel.update(user.id, {
+          store_id: store.id,
+          store_name: store.store_name,
+          updated_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        try {
+          await UserModel.delete(user.id);
+        } catch {
+          console.error("Failed to cleanup user after store creation error");
+        }
+        throw err;
+      }
+    }
+
+    // ✉️ Send verification email
     await sendEmailVerification({ name: first_name, email, otp });
 
+    // Return safe public info
     return {
       id,
       first_name,
@@ -116,8 +189,9 @@ class Accounts {
   }
 
   // ───────────────────────────────────────────────
-  // 🔐 LOGIN
+  // 🔐 LOGIN + GOOGLE AUTH + PASSWORD FLOWS
   // ───────────────────────────────────────────────
+
   static async login(email: string, password?: string) {
     if (!email) throw new BadRequestError("Please provide email");
 
@@ -127,7 +201,6 @@ class Accounts {
     );
     if (!user) throw genericError;
 
-    // ⛔ If Google account, block password login
     if (user.signup_medium === "google") {
       throw new BadRequestError("This account uses Google Sign-In only");
     }
@@ -136,15 +209,11 @@ class Accounts {
     const match = await comparePassword(password, user.password || "");
     if (!match) throw genericError;
 
-    // ⚠️ Return if email not verified yet
     if (!user.email_verified) return { ...user, email_verified: false };
 
     return user;
   }
 
-  // ───────────────────────────────────────────────
-  // 🧭 GOOGLE SIGN-IN / CONTINUE
-  // ───────────────────────────────────────────────
   static async continueWithGoogle(token: string) {
     if (!token) throw new BadRequestError("Missing Google token");
 
@@ -184,9 +253,6 @@ class Accounts {
     return user;
   }
 
-  // ───────────────────────────────────────────────
-  // ✅ VERIFY OTP
-  // ───────────────────────────────────────────────
   static async verifyOtp(email: string, otp: string) {
     const user = await this.userExist(email);
     if (!user) throw new NotFoundError("User not found");
@@ -208,9 +274,6 @@ class Accounts {
     return { msg: "Email verified successfully" };
   }
 
-  // ───────────────────────────────────────────────
-  // 🔁 RESEND OTP
-  // ───────────────────────────────────────────────
   static async resendOtp(email: string) {
     const user = await this.userExist(email);
     if (!user) throw new NotFoundError("User not found");
@@ -234,9 +297,6 @@ class Accounts {
     return { msg: "A new OTP has been sent to your email" };
   }
 
-  // ───────────────────────────────────────────────
-  // 🔁 FORGOT PASSWORD
-  // ───────────────────────────────────────────────
   static async forgotPassword(email: string) {
     if (!email) throw new BadRequestError("Please provide a valid email");
 
@@ -262,9 +322,6 @@ class Accounts {
     return { msg: "Check your email for the reset password link" };
   }
 
-  // ───────────────────────────────────────────────
-  // 🔐 RESET PASSWORD
-  // ───────────────────────────────────────────────
   static async resetPassword(email: string, token: string, password: string) {
     if (!token || !email || !password)
       throw new BadRequestError("Please provide all fields");
@@ -291,6 +348,18 @@ class Accounts {
     }
 
     throw new UnauthenticatedError("Invalid or expired token");
+  }
+
+  static async linkStoreToUser(
+    userId: string,
+    storeId: string,
+    storeName: string
+  ) {
+    await UserModel.update(userId, {
+      store_id: storeId,
+      store_name: storeName,
+      updated_at: new Date().toISOString(),
+    });
   }
 }
 

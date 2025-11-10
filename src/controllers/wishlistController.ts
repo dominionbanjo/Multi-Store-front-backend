@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
-import Wishlist from "../services/wishlistModel.js";
+import Wishlist from "../services/wishlistService.js";
 import { UnauthenticatedError } from "../utils/errors/customError.js";
 
 interface CustomRequest extends Request {
