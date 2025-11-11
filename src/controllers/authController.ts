@@ -3,6 +3,8 @@ import { StatusCodes } from "http-status-codes";
 import Accounts from "../services/accountsService.js";
 import { createJWT } from "../utils/auth/tokenUtil.js";
 import { BadRequestError } from "../utils/errors/customError.js";
+import { StoreModel } from "../config/db/models/StoreModel.js";
+import { v4 as uuidv4 } from "uuid";
 
 /**
  * 🧩 Register new user
@@ -11,7 +13,53 @@ export const register = async (req: Request, res: Response): Promise<void> => {
   const body = req.body;
   if (!body) throw new BadRequestError("Please provide all required fields");
 
+  // Create user through Accounts service
   const user = await Accounts.signUp(body);
+
+  // 🏪 Automatically create a store if the account is a vendor
+  if (user.account_type === "vendor") {
+    const existingStore = await StoreModel.findOne({ user_id: user.id });
+
+    if (!existingStore) {
+      // Ensure store_name and username were provided
+      if (!body.store_name || !body.username) {
+        throw new BadRequestError(
+          "Vendors must provide 'store_name' and 'username' during signup"
+        );
+      }
+
+      try {
+        const storeId = uuidv4();
+
+        await StoreModel.create({
+          id: storeId,
+          user_id: user.id,
+          store_name: body.store_name,
+          username: body.username,
+          description: body.description ?? null,
+          logo: null,
+          cover_image: null,
+          rating_average: 0,
+          rating_count: 0,
+          category_ids: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+        // ✅ Link store to user
+        if (Accounts.linkStoreToUser) {
+          await Accounts.linkStoreToUser(user.id, storeId, body.store_name);
+        }
+
+        console.log(`🏪 Store created automatically for vendor ${user.email}`);
+      } catch (err) {
+        console.error("❌ Failed to create vendor store:", err);
+        throw new BadRequestError("Failed to create store for vendor");
+      }
+    }
+  }
+
+  // 🎟️ Generate auth token
   const token = createJWT({
     userId: user.id,
     name: user.first_name,
