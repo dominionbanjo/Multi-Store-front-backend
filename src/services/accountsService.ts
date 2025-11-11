@@ -245,6 +245,7 @@ class Accounts {
         avatar: picture || null,
         agree_to_terms: true,
         signup_medium: "google",
+        current_sales_channel: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
