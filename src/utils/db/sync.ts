@@ -10,7 +10,7 @@ import {
   DeliveryModel,
   EscrowModel,
   TransactionModel,
-} from "../../config/db/models";
+} from "../../config/db/models/index.js";
 
 /**
  * 🔄 Sync all database models in the correct order
