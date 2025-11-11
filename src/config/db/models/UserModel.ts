@@ -1,12 +1,14 @@
 import { BaseModel, SchemaDefinition } from "../helpers/BaseModel.js";
 
-export type AccountType = "user" | "vendor";
+export type AccountType = "user" | "vendor" | "admin";
 export type SalesChannel =
   | "whatsapp"
   | "instagram"
   | "facebook"
   | "tiktok"
   | "other";
+
+export type SignupMedium = "signed" | "google";
 
 export interface IUser {
   id: string;
@@ -29,25 +31,16 @@ export interface IUser {
   email_verification_expiration: string | null;
   otp: string | null;
   otp_expiration: string | null;
-  signup_medium: string | null;
+  signup_medium: SignupMedium | null;
   avatar: string | null;
   avatar_public_id: string | null;
-
-  /** ⭐ Vendor performance stats */
   rating_average: number | null;
   rating_count: number | null;
   review_count: number | null;
-
   created_at: string | null;
   updated_at: string | null;
 }
 
-/**
- * 🧩 User Model
- * - Enforces enum for current_sales_channel
- * - Vendors can have aggregated rating scores from their products
- * - Linked to `stores` via store_id
- */
 class UserModelClass extends BaseModel<IUser> {
   protected table = "users";
 
@@ -78,12 +71,13 @@ class UserModelClass extends BaseModel<IUser> {
 
     store_name: { type: "VARCHAR(100)" },
     username: { type: "VARCHAR(100)" },
-    referral_code: { type: "VARCHAR(50)" },
 
-    /** 🛍️ Limit current_sales_channel to enum values */
+    /** 👇 Explicitly default referral_code to NULL */
+    referral_code: { type: "VARCHAR(50)", default: "NULL" },
+
     current_sales_channel: {
       type: "VARCHAR(50) CHECK (current_sales_channel IN ('whatsapp','instagram','facebook','tiktok','other'))",
-      default: "'WhatsApp'",
+      default: "'whatsapp'",
     },
 
     agree_to_terms: { type: "BOOLEAN", default: "true" },
@@ -96,12 +90,16 @@ class UserModelClass extends BaseModel<IUser> {
 
     otp: { type: "VARCHAR(10)" },
     otp_expiration: { type: "TIMESTAMPTZ" },
-    signup_medium: { type: "VARCHAR(20)", default: "'signed'" },
+
+    signup_medium: {
+      type: "VARCHAR(20) CHECK (signup_medium IN ('signed','google'))",
+      default: "'signed'",
+      notNull: true,
+    },
 
     avatar: { type: "TEXT" },
     avatar_public_id: { type: "TEXT" },
 
-    /** ⭐ Vendor performance fields */
     rating_average: { type: "NUMERIC(3,2)", default: "0" },
     rating_count: { type: "INT", default: "0" },
     review_count: { type: "INT", default: "0" },

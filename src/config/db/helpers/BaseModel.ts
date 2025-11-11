@@ -13,11 +13,14 @@ export type SchemaField = {
   primaryKey?: boolean;
   unique?: boolean;
   notNull?: boolean;
+  notNullMessage?: string; // ✅ Custom error message for required
   default?: string;
   index?: boolean;
   references?: string;
   onDelete?: string;
   onUpdate?: string;
+  min?: number; // ✅ Minimum value
+  max?: number; // ✅ Maximum value
 };
 
 /**
@@ -33,6 +36,7 @@ export type SchemaDefinition<T extends Record<string, any>> = {
  * - Handles CRUD, pagination, search
  * - Supports FK creation after table setup
  * - Integrates with QueryBuilder
+ * - ✅ Adds validation (min, max, notNullMessage)
  */
 export abstract class BaseModel<T extends Record<string, any>> {
   protected abstract table: string;
@@ -107,11 +111,38 @@ export abstract class BaseModel<T extends Record<string, any>> {
   }
 
   // ───────────────────────────────────────────────
+  // 🧠 VALIDATION (runs before create/update)
+  // ───────────────────────────────────────────────
+  private validateData(data: Partial<T>) {
+    for (const [key, value] of Object.entries(data)) {
+      const def = this.schema[key as keyof T];
+      if (!def) continue;
+
+      // Required check
+      if (def.notNull && (value === undefined || value === null)) {
+        throw new BadRequestError(def.notNullMessage || `${key} is required`);
+      }
+
+      // Min/Max numeric validation
+      if (typeof value === "number") {
+        if (def.min !== undefined && value < def.min) {
+          throw new BadRequestError(`${key} must be >= ${def.min}`);
+        }
+        if (def.max !== undefined && value > def.max) {
+          throw new BadRequestError(`${key} must be <= ${def.max}`);
+        }
+      }
+    }
+  }
+
+  // ───────────────────────────────────────────────
   // ✅ CREATE
   // ───────────────────────────────────────────────
   async create(data: Partial<T>): Promise<T> {
     if (!data || Object.keys(data).length === 0)
       throw new BadRequestError("No data provided");
+
+    this.validateData(data); // ✅ Validation before insert
 
     const keys = Object.keys(data);
     const values = Object.values(data);
@@ -164,6 +195,8 @@ export abstract class BaseModel<T extends Record<string, any>> {
     if (!updates || Object.keys(updates).length === 0)
       throw new BadRequestError("No update data provided");
 
+    this.validateData(updates); // ✅ Validation before update
+
     const keys = Object.keys(updates);
     const values = Object.values(updates);
     const setClause = keys.map((k, i) => `${k} = $${i + 1}`).join(", ");
@@ -187,7 +220,7 @@ export abstract class BaseModel<T extends Record<string, any>> {
   }
 
   // ───────────────────────────────────────────────
-  // ✅ DELETE WHERE (multi-condition)
+  // ✅ DELETE WHERE
   // ───────────────────────────────────────────────
   async deleteWhere(filters: Partial<T>): Promise<{ count: number }> {
     if (!filters || Object.keys(filters).length === 0)
@@ -202,7 +235,6 @@ export abstract class BaseModel<T extends Record<string, any>> {
       WHERE ${conditions}
       RETURNING *;
     `;
-
     const deletedRows = await sql.unsafe<T[]>(query, values);
     return { count: deletedRows.length };
   }

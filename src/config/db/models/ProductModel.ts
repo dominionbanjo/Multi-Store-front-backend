@@ -1,6 +1,4 @@
-// src/models/ProductModel.ts
 import { BaseModel, SchemaDefinition } from "../helpers/BaseModel.js";
-import { ProductReviewModel, IProductReview } from "./ReviewModel.js";
 
 export interface IProduct {
   id: string;
@@ -16,29 +14,43 @@ export interface IProduct {
   tags: string[] | null;
   image: string | null;
   gallery: string[] | null;
+
+  // 🆕 Additions to support frontend data
+  highlights: string[] | null;
+  specs: Record<string, string> | null;
+  colors: string[] | null;
+  sizes: string[] | null;
+
+  // 🆕 Shipping & Returns
+  shipping_note: string | null;
+  returns_note: string | null;
+  location: string | null;
+  shipping_cost: number | null;
+
   rating_average: number | null;
   rating_count: number | null;
   review_count: number | null;
+
   created_at: string | null;
   updated_at: string | null;
 }
 
 /**
  * 🛍️ Product Model
- * - Belongs to vendor (user) and optionally a store
- * - References product_categories for strict category linkage
- * - Auto-linked with reviews via product_reviews.product_id
+ * - Validates numeric fields (price, stock, shipping)
+ * - Enforces required vendor/store/category linkage
+ * - Supports flexible frontend properties (highlights, specs, etc.)
  */
 class ProductModelClass extends BaseModel<IProduct> {
   protected table = "products";
 
-  // ✅ Type-safe schema — keys must match IProduct exactly
   protected schema: SchemaDefinition<IProduct> = {
     id: { type: "UUID", primaryKey: true },
 
     vendor_id: {
       type: "UUID",
       notNull: true,
+      notNullMessage: "Vendor ID is required",
       references: "users(id)",
       onDelete: "CASCADE",
       onUpdate: "CASCADE",
@@ -56,30 +68,75 @@ class ProductModelClass extends BaseModel<IProduct> {
     category_id: {
       type: "UUID",
       notNull: true,
+      notNullMessage: "Category is required",
       references: "product_categories(id)",
       onDelete: "RESTRICT",
       onUpdate: "CASCADE",
       index: true,
     },
 
-    name: { type: "VARCHAR(255)", notNull: true, index: true },
-    slug: { type: "VARCHAR(255)", unique: true, notNull: true, index: true },
+    name: {
+      type: "VARCHAR(255)",
+      notNull: true,
+      notNullMessage: "Product name is required",
+      index: true,
+    },
+
+    slug: {
+      type: "VARCHAR(255)",
+      unique: true,
+      notNull: true,
+      notNullMessage: "Slug is required",
+      index: true,
+    },
+
     description: { type: "TEXT" },
 
-    price: { type: "NUMERIC(10,2)", notNull: true },
-    discount_price: { type: "NUMERIC(10,2)" },
-    stock: { type: "INT", default: "0", notNull: true },
+    price: {
+      type: "NUMERIC(10,2)",
+      notNull: true,
+      notNullMessage: "Price is required",
+      min: 1,
+    },
+
+    discount_price: {
+      type: "NUMERIC(10,2)",
+      min: 0,
+      max: 9999999,
+    },
+
+    stock: {
+      type: "INT",
+      default: "0",
+      notNull: true,
+      min: 0,
+    },
 
     tags: { type: "TEXT[]" },
     image: { type: "TEXT" },
     gallery: { type: "TEXT[]" },
 
+    highlights: { type: "TEXT[]" },
+    specs: { type: "JSONB" },
+    colors: { type: "TEXT[]" },
+    sizes: { type: "TEXT[]" },
+
+    shipping_note: { type: "TEXT" },
+    returns_note: { type: "TEXT" },
+    location: { type: "VARCHAR(255)" },
+
+    shipping_cost: {
+      type: "NUMERIC(10,2)",
+      min: 0,
+      max: 100000,
+    },
+
     rating_average: { type: "NUMERIC(3,2)", default: "0" },
     rating_count: { type: "INT", default: "0" },
     review_count: { type: "INT", default: "0" },
 
-    created_at: { type: "TIMESTAMP", default: "NOW()" },
-    updated_at: { type: "TIMESTAMP", default: "NOW()" },
+    created_at: { type: "TIMESTAMPTZ", default: "NOW()" },
+    updated_at: { type: "TIMESTAMPTZ", default: "NOW()" },
   };
 }
 

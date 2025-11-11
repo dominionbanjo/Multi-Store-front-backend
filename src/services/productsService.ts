@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
+import slugify from "slugify";
 import { ProductModel, IProduct } from "../config/db/models/ProductModel.js";
 import {
   IProductReview,
@@ -11,7 +12,6 @@ class ProductService {
   // 🧾 PRODUCT FETCHING
   // ───────────────────────────────────────────────
 
-  /** 🔍 Get a single product by ID or slug */
   static async getProduct(identifier: string): Promise<IProduct> {
     const product =
       (await ProductModel.findOne({ slug: identifier })) ||
@@ -21,7 +21,6 @@ class ProductService {
     return product;
   }
 
-  /** 🧾 Get all products (with optional filters + pagination) */
   static async getAllProducts(
     filters: Partial<IProduct> = {},
     options: { page?: number; limit?: number } = {}
@@ -30,7 +29,6 @@ class ProductService {
     return { products: data, pagination };
   }
 
-  /** 🏬 Get products by vendor or store */
   static async getByVendorOrStore({
     vendor_id,
     store_id,
@@ -57,7 +55,6 @@ class ProductService {
     return { products: data, pagination };
   }
 
-  /** 🔎 Search products by name or tag */
   static async search(q: string, page = 1, limit = 20) {
     if (!q || q.trim() === "")
       throw new BadRequestError("Search term is required");
@@ -74,17 +71,35 @@ class ProductService {
   // 🧱 CREATE / UPDATE / DELETE
   // ───────────────────────────────────────────────
 
-  /** ➕ Create a new product */
+  /** 🔧 Helper — Generate globally unique slug */
+  private static async generateUniqueSlug(name: string) {
+    const baseSlug = slugify(name, { lower: true, strict: true });
+    let slug = baseSlug;
+    let counter = 1;
+
+    // 🔁 Keep incrementing until slug is unique across ALL products
+    while (await ProductModel.findOne({ slug })) {
+      counter++;
+      slug = `${baseSlug}-${counter}`;
+    }
+
+    return slug;
+  }
+
+  /** ➕ Create a new product with unique slug */
   static async createProduct(
     data: Omit<IProduct, "id" | "created_at" | "updated_at">
   ) {
     if (!data.name || !data.vendor_id || !data.category_id)
       throw new BadRequestError("Missing required product fields");
 
+    // ✅ Generate a unique slug if not provided
+    const slug = data.slug || (await this.generateUniqueSlug(data.name));
+
     const newProduct = await ProductModel.create({
       ...data,
       id: uuidv4(),
-      slug: data.slug || data.name.toLowerCase().replace(/\s+/g, "-"),
+      slug,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
@@ -92,7 +107,6 @@ class ProductService {
     return newProduct;
   }
 
-  /** ✏️ Update a product */
   static async updateProduct(productId: string, updates: Partial<IProduct>) {
     if (!productId) throw new BadRequestError("Product ID is required");
     const product = await ProductModel.findById(productId);
@@ -106,7 +120,6 @@ class ProductService {
     return updated;
   }
 
-  /** 🗑️ Delete a product */
   static async deleteProduct(productId: string) {
     if (!productId) throw new BadRequestError("Product ID is required");
     await ProductModel.delete(productId);
@@ -114,10 +127,9 @@ class ProductService {
   }
 
   // ───────────────────────────────────────────────
-  // ⭐ REVIEWS + RATING SYNC (Product Only)
+  // ⭐ REVIEWS + RATING SYNC
   // ───────────────────────────────────────────────
 
-  /** ➕ Add a product review and recalc product ratings only */
   static async addReview(data: {
     product_id: string;
     user_id: string;
@@ -154,7 +166,6 @@ class ProductService {
     return review;
   }
 
-  /** 🔄 Recalculate product ratings (only product itself) */
   static async updateProductRatings(productId: string) {
     const { data: reviews } = await ProductReviewModel.findAll({
       product_id: productId,
@@ -180,7 +191,6 @@ class ProductService {
     return { rating_average: average, rating_count: reviewCount };
   }
 
-  /** 📖 Get all reviews for a product */
   static async getReviews(productId: string) {
     if (!productId) throw new BadRequestError("Product ID is required");
 
@@ -194,7 +204,6 @@ class ProductService {
     );
   }
 
-  /** 🗑️ Delete a review and update product ratings only */
   static async deleteReview(reviewId: string) {
     if (!reviewId) throw new BadRequestError("Review ID is required");
 
