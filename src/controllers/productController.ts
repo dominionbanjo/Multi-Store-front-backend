@@ -27,6 +27,10 @@ export const getAllProducts = async (req: Request, res: Response) => {
     limit: Number(limit) || 20,
   });
 
+  if (result.pagination.total === 0) {
+    throw new NotFoundError("No products found");
+  }
+
   res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
@@ -44,6 +48,7 @@ export const getProduct = async (req: Request, res: Response) => {
   if (!idOrSlug) throw new BadRequestError("Product ID or slug is required");
 
   const product = await ProductService.getProduct(idOrSlug);
+  if (!product) throw new NotFoundError("Product not found");
 
   res.status(StatusCodes.OK).json({
     status: 1,
@@ -68,6 +73,10 @@ export const getByVendorOrStore = async (req: Request, res: Response) => {
     limit: Number(limit) || 20,
   });
 
+  if (result.pagination.total === 0) {
+    throw new NotFoundError("No products found for this vendor or store");
+  }
+
   res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
@@ -89,6 +98,10 @@ export const searchProducts = async (req: Request, res: Response) => {
     Number(page) || 1,
     Number(limit) || 20
   );
+
+  if (result.pagination.total === 0) {
+    throw new NotFoundError(`No products found for "${q}"`);
+  }
 
   res.status(StatusCodes.OK).json({
     status: 1,
@@ -140,6 +153,8 @@ export const updateProduct = async (req: CustomRequest, res: Response) => {
   const updates = req.body;
   const updated = await ProductService.updateProduct(id, updates);
 
+  if (!updated) throw new NotFoundError("Product not found");
+
   res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
@@ -160,6 +175,7 @@ export const deleteProduct = async (req: CustomRequest, res: Response) => {
   if (!id) throw new BadRequestError("Product ID is required");
 
   const result = await ProductService.deleteProduct(id);
+  if (!result) throw new NotFoundError("Product not found or already deleted");
 
   res.status(StatusCodes.OK).json({
     status: 1,
@@ -205,6 +221,8 @@ export const getReviews = async (req: Request, res: Response) => {
   if (!product_id) throw new BadRequestError("Product ID is required");
 
   const reviews = await ProductService.getReviews(product_id);
+  if (!reviews || reviews.length === 0)
+    throw new NotFoundError("No reviews found for this product");
 
   res.status(StatusCodes.OK).json({
     status: 1,
@@ -226,6 +244,7 @@ export const deleteReview = async (req: CustomRequest, res: Response) => {
   if (!id) throw new BadRequestError("Review ID is required");
 
   const result = await ProductService.deleteReview(id);
+  if (!result) throw new NotFoundError("Review not found or already deleted");
 
   res.status(StatusCodes.OK).json({
     status: 1,

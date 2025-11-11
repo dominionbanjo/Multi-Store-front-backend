@@ -1,4 +1,3 @@
-// src/services/CartService.ts
 import { CartModel, ICart } from "../config/db/models/CartModel.js";
 import { BadRequestError, NotFoundError } from "../utils/errors/customError.js";
 import { v4 as uuidv4 } from "uuid";
