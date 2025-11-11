@@ -10,6 +10,15 @@ export type SalesChannel =
 
 export type SignupMedium = "signed" | "google";
 
+/** 🏠 Nested Address Type */
+export interface IUserAddress {
+  street?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  postal_code?: string | null;
+}
+
 export interface IUser {
   id: string;
   first_name: string;
@@ -17,26 +26,36 @@ export interface IUser {
   email: string;
   password: string | null;
   phone_number: string | null;
+
   account_type: AccountType;
   store_id: string | null;
   store_name: string | null;
   username: string | null;
+
   referral_code: string | null;
   current_sales_channel: SalesChannel | null;
   agree_to_terms: boolean | null;
   email_verified: boolean | null;
+
   password_token: string | null;
   password_token_expiration_date: string | null;
   email_verification_code: string | null;
   email_verification_expiration: string | null;
+
   otp: string | null;
   otp_expiration: string | null;
   signup_medium: SignupMedium | null;
+
   avatar: string | null;
   avatar_public_id: string | null;
+
   rating_average: number | null;
   rating_count: number | null;
   review_count: number | null;
+
+  /** 🏠 Full address object */
+  address: IUserAddress | null;
+
   created_at: string | null;
   updated_at: string | null;
 }
@@ -72,7 +91,6 @@ class UserModelClass extends BaseModel<IUser> {
     store_name: { type: "VARCHAR(100)" },
     username: { type: "VARCHAR(100)" },
 
-    /** 👇 Explicitly default referral_code to NULL */
     referral_code: { type: "VARCHAR(50)", default: "NULL" },
 
     current_sales_channel: {
@@ -103,6 +121,9 @@ class UserModelClass extends BaseModel<IUser> {
     rating_average: { type: "NUMERIC(3,2)", default: "0" },
     rating_count: { type: "INT", default: "0" },
     review_count: { type: "INT", default: "0" },
+
+    /** 🏠 JSONB address object */
+    address: { type: "JSONB" },
 
     created_at: { type: "TIMESTAMP", default: "NOW()" },
     updated_at: { type: "TIMESTAMP", default: "NOW()" },

@@ -142,3 +142,45 @@ export const deleteStore = async (req: CustomRequest, res: Response) => {
     message: result.message,
   });
 };
+
+/** 🏦 POST: /api/v1/stores/:id/bank */
+export const registerBankAccount = async (
+  req: CustomRequest,
+  res: Response
+) => {
+  if (!req.user) throw new UnauthenticatedError("Please login");
+
+  const { id } = req.params;
+  const { bank_code, account_number, settlement_email } = req.body;
+  if (!bank_code || !account_number)
+    throw new BadRequestError("Bank code and account number are required");
+
+  const result = await StoreService.registerBankAccount(
+    id,
+    bank_code,
+    account_number,
+    settlement_email
+  );
+
+  res.status(StatusCodes.CREATED).json(result);
+};
+
+/** ✏️ PATCH: /api/v1/stores/:id/bank */
+export const updateBankAccount = async (req: CustomRequest, res: Response) => {
+  if (!req.user) throw new UnauthenticatedError("Please login");
+
+  const { id } = req.params;
+  const result = await StoreService.updateBankAccount(id, req.body);
+
+  res.status(StatusCodes.OK).json(result);
+};
+
+/** ❌ DELETE: /api/v1/stores/:id/bank */
+export const deleteBankAccount = async (req: CustomRequest, res: Response) => {
+  if (!req.user) throw new UnauthenticatedError("Please login");
+
+  const { id } = req.params;
+  const result = await StoreService.deleteBankAccount(id);
+
+  res.status(StatusCodes.OK).json(result);
+};

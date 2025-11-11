@@ -2,6 +2,10 @@ import { v4 as uuidv4 } from "uuid";
 import { StoreModel, IStore } from "../config/db/models/StoreModel.js";
 import { ProductModel } from "../config/db/models/ProductModel.js";
 import { BadRequestError, NotFoundError } from "../utils/errors/customError.js";
+import {
+  createTransferRecipient,
+  verifyBankAccount,
+} from "../utils/payment/paystack.js";
 
 class StoreService {
   /** 🏬 Create a new store (vendor only) */
@@ -264,6 +268,97 @@ class StoreService {
       chart: {
         sales_trend: sortedSales,
       },
+    };
+  }
+
+  // ───────────────────────────────────────────────
+  // 🏦 BANK ACCOUNT MANAGEMENT
+  // ───────────────────────────────────────────────
+
+  /** 🏦 Add and verify bank account (Paystack recipient) */
+  static async registerBankAccount(
+    storeId: string,
+    bank_code: string,
+    account_number: string,
+    settlement_email?: string
+  ) {
+    if (!storeId || !bank_code || !account_number)
+      throw new BadRequestError("Missing required bank details");
+
+    const store = await StoreModel.findById(storeId);
+    if (!store) throw new NotFoundError("Store not found");
+
+    const verified = await verifyBankAccount(account_number, bank_code);
+    if (!verified?.account_name)
+      throw new BadRequestError("Bank account could not be verified");
+
+    const recipient_code = await createTransferRecipient({
+      name: verified.account_name,
+      account_number,
+      bank_code,
+    });
+
+    const updated = await StoreModel.update(storeId, {
+      account_number,
+      bank_code,
+      bank_name: verified.bank_name || verified.account_name,
+      recipient_code,
+      settlement_email: settlement_email || store.settlement_email,
+      updated_at: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      message: "Bank account registered successfully",
+      store: updated,
+    };
+  }
+
+  /** ✏️ Update existing payout details (non-Paystack re-registration) */
+  static async updateBankAccount(
+    storeId: string,
+    updates: {
+      account_number?: string;
+      bank_code?: string;
+      bank_name?: string;
+      settlement_email?: string;
+    }
+  ) {
+    if (!storeId) throw new BadRequestError("Store ID required");
+
+    const store = await StoreModel.findById(storeId);
+    if (!store) throw new NotFoundError("Store not found");
+
+    const updated = await StoreModel.update(storeId, {
+      ...updates,
+      updated_at: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      message: "Bank account details updated",
+      store: updated,
+    };
+  }
+
+  /** ❌ Remove store’s payout info */
+  static async deleteBankAccount(storeId: string) {
+    const store = await StoreModel.findById(storeId);
+    if (!store) throw new NotFoundError("Store not found");
+
+    const cleared = await StoreModel.update(storeId, {
+      account_number: null,
+      bank_code: null,
+      bank_name: null,
+      recipient_code: null,
+      settlement_email: null,
+      updated_at: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      message: "Bank account removed successfully",
+      store: cleared,
     };
   }
 }

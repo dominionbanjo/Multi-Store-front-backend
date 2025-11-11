@@ -46,7 +46,9 @@ export abstract class BaseModel<T extends Record<string, any>> {
   // 🧱 AUTO SYNC (Two-phase)
   // ───────────────────────────────────────────────
   async sync(): Promise<void> {
-    // 1️⃣ Create table WITHOUT foreign keys
+    console.log(`🔄 Syncing table: ${this.table}`);
+
+    // 1️⃣ Create table if not exists
     const cols = Object.entries(this.schema)
       .map(([name, def]) => {
         let line = `${name} ${def.type}`;
@@ -58,34 +60,64 @@ export abstract class BaseModel<T extends Record<string, any>> {
       })
       .join(",\n  ");
 
-    const createTableQuery = `
-      CREATE TABLE IF NOT EXISTS ${this.table} (
-        ${cols}
-      );
-    `;
-    await sql.unsafe(createTableQuery);
+    await sql.unsafe(`
+    CREATE TABLE IF NOT EXISTS ${this.table} (
+      ${cols}
+    );
+  `);
 
-    // 2️⃣ Add foreign keys AFTER all tables exist
+    // 2️⃣ Fetch existing columns in the DB
+    const existingCols = await sql.unsafe<
+      {
+        column_name: string;
+      }[]
+    >(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_name = '${this.table}';
+  `);
+    const existingNames = existingCols.map((c) => c.column_name);
+
+    // 3️⃣ Add any missing columns dynamically
+    for (const [name, def] of Object.entries(this.schema)) {
+      if (!existingNames.includes(name)) {
+        let line = `${name} ${def.type}`;
+        if (def.notNull) line += " NOT NULL";
+        if (def.default) line += ` DEFAULT ${def.default}`;
+
+        try {
+          await sql.unsafe(`ALTER TABLE ${this.table} ADD COLUMN ${line};`);
+          console.log(`🟢 Added missing column: ${this.table}.${name}`);
+        } catch (err) {
+          console.warn(
+            `⚠️ Failed to add column ${name} to ${this.table}:`,
+            (err as Error).message
+          );
+        }
+      }
+    }
+
+    // 4️⃣ Add foreign keys AFTER all tables exist
     for (const [name, def] of Object.entries(this.schema)) {
       if (def.references) {
         const fkName = `fk_${this.table}_${name}`;
         const constraintQuery = `
-          DO $$
-          BEGIN
-            IF NOT EXISTS (
-              SELECT 1 FROM information_schema.table_constraints
-              WHERE constraint_name = '${fkName}'
-            ) THEN
-              ALTER TABLE ${this.table}
-              ADD CONSTRAINT ${fkName}
-              FOREIGN KEY (${name})
-              REFERENCES ${def.references}
-              ${def.onDelete ? `ON DELETE ${def.onDelete}` : ""}
-              ${def.onUpdate ? `ON UPDATE ${def.onUpdate}` : ""};
-            END IF;
-          END
-          $$;
-        `;
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.table_constraints
+            WHERE constraint_name = '${fkName}'
+          ) THEN
+            ALTER TABLE ${this.table}
+            ADD CONSTRAINT ${fkName}
+            FOREIGN KEY (${name})
+            REFERENCES ${def.references}
+            ${def.onDelete ? `ON DELETE ${def.onDelete}` : ""}
+            ${def.onUpdate ? `ON UPDATE ${def.onUpdate}` : ""};
+          END IF;
+        END
+        $$;
+      `;
         try {
           await sql.unsafe(constraintQuery);
         } catch (err) {
@@ -97,7 +129,7 @@ export abstract class BaseModel<T extends Record<string, any>> {
       }
     }
 
-    // 3️⃣ Create indexes
+    // 5️⃣ Create indexes
     for (const [name, def] of Object.entries(this.schema)) {
       if (def.index) {
         const indexName = `idx_${this.table}_${name}`;

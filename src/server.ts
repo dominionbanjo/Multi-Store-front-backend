@@ -12,9 +12,13 @@ import { sanitizeInput } from "./middlewares/sanitizeInputs.js";
 import cloudinary from "cloudinary";
 
 // Routers
-import userRouter from "./routes/userRoutes.js";
 import authRouter from "./routes/authRoutes.js";
 import cartRouter from "./routes/cartRoutes.js";
+import orderRouter from "./routes/orderRoutes.js";
+import productRouter from "./routes/productRoutes.js";
+import reviewRouter from "./routes/reviewRoutes.js";
+import storeRouter from "./routes/storeRoutes.js";
+import userRouter from "./routes/userRoutes.js";
 import wishlistRouter from "./routes/wishlistRoutes.js";
 
 // Middlewares
@@ -49,6 +53,10 @@ app.use(morgan("dev"));
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/users", userRouter);
 app.use("/api/v1/cart", cartRouter);
+app.use("/api/v1/order", orderRouter);
+app.use("/api/v1/product", productRouter);
+app.use("/api/v1/review", reviewRouter);
+app.use("/api/v1/store", storeRouter);
 app.use("/api/v1/wishlist", wishlistRouter);
 
 // ✅ Test route
