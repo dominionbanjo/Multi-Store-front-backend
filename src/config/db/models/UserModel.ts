@@ -93,9 +93,13 @@ class UserModelClass extends BaseModel<IUser> {
 
     referral_code: { type: "VARCHAR(50)", default: "NULL" },
 
+    /**
+     * ✅ Allow NULL for current_sales_channel
+     *    The trick is to add "OR current_sales_channel IS NULL"
+     */
     current_sales_channel: {
-      type: "VARCHAR(50) CHECK (current_sales_channel IN ('whatsapp','instagram','facebook','tiktok','other'))",
-      default: "'whatsapp'",
+      type: "VARCHAR(50) CHECK (current_sales_channel IN ('whatsapp','instagram','facebook','tiktok','other') OR current_sales_channel IS NULL)",
+      default: "NULL",
     },
 
     agree_to_terms: { type: "BOOLEAN", default: "true" },
