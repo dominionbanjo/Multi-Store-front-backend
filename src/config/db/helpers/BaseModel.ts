@@ -350,4 +350,56 @@ export abstract class BaseModel<T extends Record<string, any>> {
   query() {
     return new QueryBuilder<T>(this.table);
   }
+
+  // ───────────────────────────────────────────────
+  // ✅ FIND SELECTED FIELDS (Partial Projection)
+  // ───────────────────────────────────────────────
+  async findSelected<K extends keyof T>(
+    columns: K[],
+    filters?: Partial<T>,
+    options?: { page?: number; limit?: number }
+  ): Promise<{
+    data: Pick<T, K>[];
+    pagination: { page: number; limit: number; total: number };
+  }> {
+    if (!columns || columns.length === 0)
+      throw new BadRequestError("You must specify columns to select");
+
+    // Validate that all columns exist in schema
+    for (const col of columns) {
+      if (!(col in this.schema)) {
+        throw new BadRequestError(`Invalid column selected: ${String(col)}`);
+      }
+    }
+
+    const page = options?.page ?? 1;
+    const limit = options?.limit ?? 20;
+    const offset = (page - 1) * limit;
+
+    const values: any[] = [];
+    let whereClause = "";
+    if (filters && Object.keys(filters).length > 0) {
+      const keys = Object.keys(filters);
+      whereClause =
+        "WHERE " + keys.map((k, i) => `${k} = $${i + 1}`).join(" AND ");
+      values.push(...Object.values(filters));
+    }
+
+    const selectClause = columns.map((col) => `"${String(col)}"`).join(", ");
+
+    const data = await sql.unsafe<Pick<T, K>[]>(
+      `SELECT ${selectClause} FROM ${this.table} ${whereClause}
+       ORDER BY created_at DESC
+       LIMIT ${limit} OFFSET ${offset};`,
+      values
+    );
+
+    const [countResult] = await sql.unsafe<{ total: string }[]>(
+      `SELECT COUNT(*) AS total FROM ${this.table} ${whereClause};`,
+      values
+    );
+    const total = parseInt(countResult.total, 10);
+
+    return { data, pagination: { page, limit, total } };
+  }
 }

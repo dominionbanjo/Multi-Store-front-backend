@@ -63,11 +63,10 @@ export const getProduct = async (req: Request, res: Response) => {
  * Get products by vendor or store
  */
 export const getByVendorOrStore = async (req: Request, res: Response) => {
-  const { vendor_id, store_id } = req.params;
+  const { store_id } = req.params;
   const { page, limit } = req.query;
 
-  const result = await ProductService.getByVendorOrStore({
-    vendor_id,
+  const result = await ProductService.getProductsByStore({
     store_id,
     page: Number(page) || 1,
     limit: Number(limit) || 20,
@@ -123,7 +122,7 @@ export const createProduct = async (req: CustomRequest, res: Response) => {
     throw new BadRequestError("Only vendors can create products");
 
   const data = req.body;
-  if (!data || !data.name || !data.category_id)
+  if (!data || !data.name || !data.category)
     throw new BadRequestError("Missing required fields");
 
   const product = await ProductService.createProduct({
@@ -176,75 +175,6 @@ export const deleteProduct = async (req: CustomRequest, res: Response) => {
 
   const result = await ProductService.deleteProduct(id);
   if (!result) throw new NotFoundError("Product not found or already deleted");
-
-  res.status(StatusCodes.OK).json({
-    status: 1,
-    success: true,
-    message: result.message,
-  });
-};
-
-/**
- * ⭐ POST: /api/v1/products/:product_id/reviews
- * Add a review for a product
- */
-export const addReview = async (req: CustomRequest, res: Response) => {
-  if (!req.user)
-    throw new UnauthenticatedError("Please login to review a product");
-
-  const { product_id } = req.params;
-  const { rating, comment } = req.body;
-
-  if (!rating) throw new BadRequestError("Rating is required");
-
-  const review = await ProductService.addReview({
-    product_id,
-    user_id: req.user.userId,
-    rating,
-    comment,
-  });
-
-  res.status(StatusCodes.CREATED).json({
-    status: 1,
-    success: true,
-    message: "Review added successfully",
-    review,
-  });
-};
-
-/**
- * 📖 GET: /api/v1/products/:product_id/reviews
- * Get all reviews for a product
- */
-export const getReviews = async (req: Request, res: Response) => {
-  const { product_id } = req.params;
-  if (!product_id) throw new BadRequestError("Product ID is required");
-
-  const reviews = await ProductService.getReviews(product_id);
-  if (!reviews || reviews.length === 0)
-    throw new NotFoundError("No reviews found for this product");
-
-  res.status(StatusCodes.OK).json({
-    status: 1,
-    success: true,
-    message: "Product reviews retrieved successfully",
-    reviews,
-  });
-};
-
-/**
- * 🗑️ DELETE: /api/v1/products/reviews/:id
- * Delete a review (user only deletes own review)
- */
-export const deleteReview = async (req: CustomRequest, res: Response) => {
-  if (!req.user)
-    throw new UnauthenticatedError("Please login to delete a review");
-
-  const { id } = req.params;
-  if (!id) throw new BadRequestError("Review ID is required");
-
-  const result = await ProductService.deleteReview(id);
-  if (!result) throw new NotFoundError("Review not found or already deleted");
 
   res.status(StatusCodes.OK).json({
     status: 1,

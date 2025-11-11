@@ -47,10 +47,10 @@ export const createStore = async (req: CustomRequest, res: Response) => {
  * Get store details by ID or username
  */
 export const getStore = async (req: Request, res: Response) => {
-  const { idOrUsername } = req.params;
-  if (!idOrUsername) throw new BadRequestError("Store ID or username required");
+  const { id } = req.params;
+  if (!id) throw new BadRequestError("Store ID required");
 
-  const store = await StoreService.getStore(idOrUsername);
+  const store = await StoreService.getStore(id);
 
   res.status(StatusCodes.OK).json({
     status: 1,

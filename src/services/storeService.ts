@@ -23,29 +23,80 @@ class StoreService {
       id: uuidv4(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      analytics: { sales: [], orders: [], customers: [] }, // Initialize structure
+      analytics: { sales: [], orders: [], customers: [] },
     });
 
     return store;
   }
 
-  /** 📄 Get a store by ID or username */
-  static async getStore(identifier: string): Promise<IStore> {
-    const store =
-      (await StoreModel.findOne({ id: identifier })) ||
-      (await StoreModel.findOne({ username: identifier }));
+  // ───────────────────────────────────────────────
+  // 🧭 CATEGORY DERIVATION HELPER
+  // ───────────────────────────────────────────────
+
+  /** 🏷️ Get unique categories for a store (derived from its products) */
+  static async getStoreCategories(storeId: string): Promise<string[]> {
+    if (!storeId) throw new BadRequestError("Store ID is required");
+
+    const products = await ProductModel.findSelected(
+      ["category"],
+      { store_id: storeId },
+      { page: 1, limit: 100 }
+    );
+
+    const categories = Array.from(
+      new Set(products.data.map((p: any) => p.category).filter(Boolean))
+    );
+
+    return categories;
+  }
+
+  // ───────────────────────────────────────────────
+  // 📄 GET SINGLE STORE (WITH CATEGORIES)
+  // ───────────────────────────────────────────────
+  static async getStore(
+    identifier: string
+  ): Promise<IStore & { categories: string[] }> {
+    const store = await StoreModel.findOne({ id: identifier });
 
     if (!store) throw new NotFoundError("Store not found");
-    return store;
+
+    const categories = await StoreService.getStoreCategories(store.id);
+
+    return { ...store, categories };
   }
 
-  /** 🧾 Get all stores (paginated) */
+  // ───────────────────────────────────────────────
+  // 🧾 GET ALL STORES (WITH LIMITED FIELDS + CATEGORIES)
+  // ───────────────────────────────────────────────
   static async getAllStores(page = 1, limit = 20) {
-    const { data, pagination } = await StoreModel.findAll({}, { page, limit });
-    return { stores: data, pagination };
+    const { data: stores, pagination } = await StoreModel.findSelected(
+      [
+        "id",
+        "store_name",
+        "username",
+        "description",
+        "address",
+        "total_products",
+        "logo",
+        "rating_average",
+      ],
+      {},
+      { page, limit }
+    );
+
+    const enrichedStores = await Promise.all(
+      stores.map(async (store) => {
+        const categories = await StoreService.getStoreCategories(store.id);
+        return { ...store, categories };
+      })
+    );
+
+    return { stores: enrichedStores, pagination };
   }
 
-  /** 🧭 Get all products for a store */
+  // ───────────────────────────────────────────────
+  // 🧭 GET STORE PRODUCTS
+  // ───────────────────────────────────────────────
   static async getStoreProducts(storeId: string, page = 1, limit = 20) {
     if (!storeId) throw new BadRequestError("Store ID is required");
 
@@ -60,7 +111,9 @@ class StoreService {
     return { store, products: data, pagination };
   }
 
-  /** ✏️ Update a store */
+  // ───────────────────────────────────────────────
+  // ✏️ UPDATE STORE
+  // ───────────────────────────────────────────────
   static async updateStore(storeId: string, updates: Partial<IStore>) {
     if (!storeId) throw new BadRequestError("Store ID is required");
 
@@ -75,7 +128,9 @@ class StoreService {
     return updated;
   }
 
-  /** ❌ Delete a store */
+  // ───────────────────────────────────────────────
+  // ❌ DELETE STORE
+  // ───────────────────────────────────────────────
   static async deleteStore(storeId: string) {
     if (!storeId) throw new BadRequestError("Store ID is required");
 
@@ -87,10 +142,8 @@ class StoreService {
   }
 
   // ───────────────────────────────────────────────
-  // 📊 HELPER: Update or insert analytics record
+  // 📊 UPDATE ANALYTICS
   // ───────────────────────────────────────────────
-
-  /** 🔧 Add analytics record for sales, orders, and customers */
   static async updateStoreAnalytics(
     storeId: string,
     amount: number,
@@ -117,32 +170,25 @@ class StoreService {
     const month = monthNames[now.getMonth()];
     const year = now.getFullYear();
 
-    // Initialize analytics if empty
     const analytics = store.analytics || {
       sales: [],
       orders: [],
       customers: [],
     };
 
-    // 🔹 Update Sales
-    const salesRecord = analytics.sales.find(
-      (r: any) => r.month === month && r.year === year
-    );
+    const findRecord = (arr: any[], key: string) =>
+      arr.find((r) => r.month === month && r.year === year);
+
+    const salesRecord = findRecord(analytics.sales, "amount");
     if (salesRecord) salesRecord.amount += amount;
     else analytics.sales.push({ month, year, amount });
 
-    // 🔹 Update Orders
-    const orderRecord = analytics.orders.find(
-      (r: any) => r.month === month && r.year === year
-    );
+    const orderRecord = findRecord(analytics.orders, "count");
     if (orderRecord) orderRecord.count += 1;
     else analytics.orders.push({ month, year, count: 1 });
 
-    // 🔹 Update Customers
     if (customerId) {
-      const customerRecord = analytics.customers.find(
-        (r: any) => r.month === month && r.year === year
-      );
+      const customerRecord = findRecord(analytics.customers, "count");
       if (customerRecord) {
         if (!customerRecord.list.includes(customerId)) {
           customerRecord.list.push(customerId);
@@ -153,7 +199,6 @@ class StoreService {
       }
     }
 
-    // Sort by year and month
     const sortByDate = (arr: any[]) =>
       arr.sort(
         (a, b) =>
@@ -165,7 +210,6 @@ class StoreService {
     analytics.orders = sortByDate(analytics.orders);
     analytics.customers = sortByDate(analytics.customers);
 
-    // Update cached totals
     const totalRevenue = (Number(store.total_revenue) || 0) + amount;
     const totalOrders = (Number(store.total_orders) || 0) + 1;
     const uniqueCustomers = new Set(
@@ -186,7 +230,6 @@ class StoreService {
   // ───────────────────────────────────────────────
   // 📈 GET DASHBOARD ANALYTICS
   // ───────────────────────────────────────────────
-
   static async getAnalytics(storeId: string) {
     if (!storeId) throw new BadRequestError("Store ID is required");
 
@@ -207,8 +250,7 @@ class StoreService {
         ? parseFloat(((totalOrders / totalCustomers) * 100).toFixed(1))
         : 0;
 
-    const salesTrend = analytics.sales || [];
-    const sortedSales = [...salesTrend].sort(
+    const sortedSales = [...(analytics.sales || [])].sort(
       (a, b) =>
         a.year - b.year ||
         [
@@ -261,21 +303,17 @@ class StoreService {
         customers: totalCustomers,
         conversion_rate: conversionRate,
         sales_change: salesChange,
-        orders_change: 0, // placeholder – can compute from analytics.orders
+        orders_change: 0,
         customers_change: 0,
         conversion_rate_change: 0,
       },
-      chart: {
-        sales_trend: sortedSales,
-      },
+      chart: { sales_trend: sortedSales },
     };
   }
 
   // ───────────────────────────────────────────────
   // 🏦 BANK ACCOUNT MANAGEMENT
   // ───────────────────────────────────────────────
-
-  /** 🏦 Add and verify bank account (Paystack recipient) */
   static async registerBankAccount(
     storeId: string,
     bank_code: string,
@@ -314,7 +352,6 @@ class StoreService {
     };
   }
 
-  /** ✏️ Update existing payout details (non-Paystack re-registration) */
   static async updateBankAccount(
     storeId: string,
     updates: {
@@ -341,7 +378,6 @@ class StoreService {
     };
   }
 
-  /** ❌ Remove store’s payout info */
   static async deleteBankAccount(storeId: string) {
     const store = await StoreModel.findById(storeId);
     if (!store) throw new NotFoundError("Store not found");
