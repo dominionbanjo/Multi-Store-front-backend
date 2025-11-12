@@ -50,35 +50,6 @@ class ProductCategoryModelClass extends BaseModel<IProductCategory> {
   };
 
   /**
-   * 🧠 Auto-generate slug from name if not provided
-   */
-  async create(data: Partial<IProductCategory>): Promise<IProductCategory> {
-    if (!data.name) throw new Error("Category name is required");
-
-    // Auto-generate slug
-    const slug =
-      data.slug ||
-      data.name
-        .toLowerCase()
-        .trim()
-        .replace(/[^\w\s-]/g, "")
-        .replace(/\s+/g, "-");
-
-    return super.create({
-      ...data,
-      slug,
-    });
-  }
-
-  /**
-   * 🧾 Fetch all categories, including nested subcategories (if any)
-   */
-  async getAllCategories(): Promise<IProductCategory[]> {
-    const { data } = await this.findAll({}, { limit: 1000 });
-    return data;
-  }
-
-  /**
    * 🔍 Find all subcategories of a given parent_id
    */
   async getSubcategories(parent_id: string): Promise<IProductCategory[]> {

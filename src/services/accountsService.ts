@@ -145,7 +145,6 @@ class Accounts {
           id: storeId,
           user_id: user.id,
           store_name,
-          username,
           description: null,
           logo: null,
           cover_image: null,

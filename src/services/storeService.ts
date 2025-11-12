@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
+import slugify from "slugify";
 import { StoreModel, IStore } from "../config/db/models/StoreModel.js";
 import { ProductModel } from "../config/db/models/ProductModel.js";
 import { BadRequestError, NotFoundError } from "../utils/errors/customError.js";
@@ -8,19 +9,39 @@ import {
 } from "../utils/payment/paystack.js";
 
 class StoreService {
+  // ───────────────────────────────────────────────
+  // 🔤 UNIQUE SLUG GENERATOR
+  // ───────────────────────────────────────────────
+  private static async generateUniqueSlug(store_name: string): Promise<string> {
+    const baseSlug = slugify(store_name, { lower: true, strict: true });
+    let slug = baseSlug;
+    let counter = 1;
+
+    while (await StoreModel.findOne({ slug })) {
+      counter++;
+      slug = `${baseSlug}-${counter}`;
+    }
+
+    return slug;
+  }
+
   /** 🏬 Create a new store (vendor only) */
   static async createStore(
     data: Omit<IStore, "id" | "created_at" | "updated_at">
   ) {
-    if (!data.user_id || !data.store_name || !data.username)
+    if (!data.user_id || !data.store_name)
       throw new BadRequestError("Missing required store fields");
 
-    const existing = await StoreModel.findOne({ username: data.username });
-    if (existing) throw new BadRequestError("Username already taken");
+    const existing = await StoreModel.findOne({ store_name: data.store_name });
+    if (existing)
+      throw new BadRequestError("Store name already taken, choose another");
+
+    const slug = await this.generateUniqueSlug(data.store_name);
 
     const store = await StoreModel.create({
       ...data,
       id: uuidv4(),
+      slug,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       analytics: { sales: [], orders: [], customers: [] },
@@ -51,12 +72,22 @@ class StoreService {
   }
 
   // ───────────────────────────────────────────────
-  // 📄 GET SINGLE STORE (WITH CATEGORIES)
+  // 📄 GET SINGLE STORE (BY ID OR USERNAME)
   // ───────────────────────────────────────────────
   static async getStore(
     identifier: string
   ): Promise<IStore & { categories: string[] }> {
-    const store = await StoreModel.findOne({ id: identifier });
+    if (!identifier) throw new BadRequestError("Store identifier required");
+
+    // ✅ Detect if identifier is UUID or username
+    const isUUID =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        identifier
+      );
+
+    const store = isUUID
+      ? await StoreModel.findOne({ id: identifier })
+      : await StoreModel.findOne({ slug: identifier });
 
     if (!store) throw new NotFoundError("Store not found");
 
@@ -73,7 +104,7 @@ class StoreService {
       [
         "id",
         "store_name",
-        "username",
+        "category",
         "description",
         "address",
         "total_products",
@@ -95,37 +126,115 @@ class StoreService {
   }
 
   // ───────────────────────────────────────────────
-  // 🧭 GET STORE PRODUCTS
+  // 🧾 GET ALL STORES (ADMIN — FULL DETAILS)
   // ───────────────────────────────────────────────
-  static async getStoreProducts(storeId: string, page = 1, limit = 20) {
-    if (!storeId) throw new BadRequestError("Store ID is required");
-
-    const store = await StoreModel.findById(storeId);
-    if (!store) throw new NotFoundError("Store not found");
-
-    const { data, pagination } = await ProductModel.findAll(
-      { store_id: storeId },
+  static async getAllStoresAdmin(page = 1, limit = 20) {
+    const { data: stores, pagination } = await StoreModel.findAll(
+      {},
       { page, limit }
     );
 
-    return { store, products: data, pagination };
+    const enrichedStores = await Promise.all(
+      stores.map(async (store) => {
+        const categories = await StoreService.getStoreCategories(store.id);
+        return { ...store, categories };
+      })
+    );
+
+    return {
+      data: enrichedStores,
+      pagination,
+    };
   }
 
   // ───────────────────────────────────────────────
+  // 🧭 GET STORE PRODUCTS
+  // ───────────────────────────────────────────────
+
+  static async getStoreProducts(identifier: string, page = 1, limit = 20) {
+    if (!identifier) throw new BadRequestError("Store identifier is required");
+
+    const isUUID =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        identifier
+      );
+
+    // Find store by ID or slug
+    const store = isUUID
+      ? await StoreModel.findOne({ id: identifier })
+      : await StoreModel.findOne({ slug: identifier });
+
+    if (!store) throw new NotFoundError("Store not found");
+
+    // Fetch products for that store
+    const { data, pagination } = await ProductModel.findAll(
+      { store_id: store.id },
+      { page, limit }
+    );
+
+    return { products: data, pagination };
+  }
+  // ───────────────────────────────────────────────
   // ✏️ UPDATE STORE
   // ───────────────────────────────────────────────
-  static async updateStore(storeId: string, updates: Partial<IStore>) {
+  // inside StoreService
+  static async updateStore(storeId: string, data: Record<string, any>) {
     if (!storeId) throw new BadRequestError("Store ID is required");
 
-    const existing = await StoreModel.findById(storeId);
-    if (!existing) throw new NotFoundError("Store not found");
+    // ✅ Verify store exists
+    const existingStore = await StoreModel.findById(storeId);
+    if (!existingStore) throw new NotFoundError("Store not found");
 
-    const updated = await StoreModel.update(storeId, {
-      ...updates,
+    // ✅ Define allowed update fields
+    const allowedFields = [
+      "store_name",
+      "description",
+      "logo",
+      "logo_public_id",
+      "cover_image",
+      "cover_image_public_id",
+      "category",
+      "category_ids",
+      "email",
+      "phone_number",
+      "website",
+      "address",
+    ];
+    // ✅ Filter only allowed fields
+    const filtered: Record<string, any> = {};
+    for (const key of allowedFields) {
+      if (data[key] !== undefined) filtered[key] = data[key];
+    }
+
+    // ✅ If no valid fields, throw
+    if (Object.keys(filtered).length === 0) {
+      throw new BadRequestError("No valid fields to update");
+    }
+
+    // ✅ If store_name is being changed, check for duplicates
+    if (
+      filtered.store_name &&
+      filtered.store_name.toLowerCase() !==
+        existingStore.store_name.toLowerCase()
+    ) {
+      const duplicate = await StoreModel.findOne({
+        store_name: filtered.store_name,
+      });
+      if (duplicate && duplicate.id !== storeId) {
+        throw new BadRequestError("Store name already in use by another store");
+      }
+
+      // ✅ Generate new unique slug if name changes
+      filtered.slug = await this.generateUniqueSlug(filtered.store_name);
+    }
+
+    // ✅ Apply updates
+    const updatedStore = await StoreModel.update(storeId, {
+      ...filtered,
       updated_at: new Date().toISOString(),
     });
 
-    return updated;
+    return updatedStore;
   }
 
   // ───────────────────────────────────────────────
@@ -352,29 +461,87 @@ class StoreService {
     };
   }
 
+  // ───────────────────────────────────────────────
+  // 🏦 UPDATE BANK ACCOUNT (strict verification)
+  // ───────────────────────────────────────────────
   static async updateBankAccount(
     storeId: string,
     updates: {
       account_number?: string;
       bank_code?: string;
-      bank_name?: string;
       settlement_email?: string;
     }
   ) {
-    if (!storeId) throw new BadRequestError("Store ID required");
+    if (!storeId) throw new BadRequestError("Store ID is required");
 
     const store = await StoreModel.findById(storeId);
     if (!store) throw new NotFoundError("Store not found");
 
+    const { account_number, bank_code, settlement_email } = updates;
+
+    // ✅ Require at least one field to change
+    if (!account_number && !bank_code && !settlement_email) {
+      throw new BadRequestError("No bank details provided for update");
+    }
+
+    // ✅ Re-verify only if bank_code or account_number is changing
+    let verifiedAccount = null;
+    let recipient_code = store.recipient_code;
+    let bank_name = store.bank_name;
+
+    const bankDetailsChanged =
+      (account_number && account_number !== store.account_number) ||
+      (bank_code && bank_code !== store.bank_code);
+
+    if (bankDetailsChanged) {
+      const acctNum = account_number || store.account_number;
+      const bCode = bank_code || store.bank_code;
+
+      if (!acctNum || !bCode) {
+        throw new BadRequestError(
+          "Both account number and bank code are required for verification"
+        );
+      }
+
+      // ✅ Verify bank account with Paystack
+      verifiedAccount = await verifyBankAccount(acctNum, bCode);
+
+      if (!verifiedAccount?.account_name) {
+        // ❌ Reject update if verification fails
+        throw new BadRequestError("Bank verification failed — invalid details");
+      }
+
+      // ✅ Create new Paystack transfer recipient
+      recipient_code = await createTransferRecipient({
+        name: verifiedAccount.account_name,
+        account_number: acctNum,
+        bank_code: bCode,
+      });
+
+      bank_name = verifiedAccount.bank_name || verifiedAccount.account_name;
+    }
+
+    // ✅ Only update if verified OR if just settlement_email changed
+    if (bankDetailsChanged && !verifiedAccount) {
+      throw new BadRequestError("Cannot update — bank verification required");
+    }
+
     const updated = await StoreModel.update(storeId, {
-      ...updates,
+      account_number: account_number || store.account_number,
+      bank_code: bank_code || store.bank_code,
+      bank_name,
+      recipient_code,
+      settlement_email: settlement_email || store.settlement_email,
       updated_at: new Date().toISOString(),
     });
 
     return {
       success: true,
-      message: "Bank account details updated",
+      message: verifiedAccount
+        ? "Bank verified and updated successfully"
+        : "Settlement email updated successfully",
       store: updated,
+      verified: verifiedAccount || null,
     };
   }
 

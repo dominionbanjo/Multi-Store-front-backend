@@ -13,9 +13,8 @@ export const sendResetPasswordEmail = async ({
   token,
   origin,
 }: ResetPasswordEmail) => {
-  const resetURL = `${origin}/reset-password?token=${token}&email=${email}`;
+  const resetURL = `${origin}/auth/reset-password?token=${token}&email=${email}`;
 
-  // ✅ HTML email template
   const html = `
   <div style="
     background-color:#f9fafb;
@@ -91,7 +90,6 @@ export const sendResetPasswordEmail = async ({
   </div>
   `;
 
-  // ✅ Send the email
   return sendEmail({
     to: email,
     subject: "Reset your easyStore password",

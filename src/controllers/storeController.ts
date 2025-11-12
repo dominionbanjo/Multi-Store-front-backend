@@ -3,8 +3,11 @@ import { StatusCodes } from "http-status-codes";
 import StoreService from "../services/storeService.js";
 import {
   BadRequestError,
+  NotFoundError,
   UnauthenticatedError,
 } from "../utils/errors/customError.js";
+import cloudinary from "cloudinary";
+import { formatImage } from "../utils/images/multer.js";
 
 interface CustomRequest extends Request {
   user?: {
@@ -26,7 +29,7 @@ export const createStore = async (req: CustomRequest, res: Response) => {
     throw new BadRequestError("Only vendors can create stores");
 
   const data = req.body;
-  if (!data.store_name || !data.username)
+  if (!data.store_name)
     throw new BadRequestError("Missing store_name or username");
 
   const store = await StoreService.createStore({
@@ -47,16 +50,23 @@ export const createStore = async (req: CustomRequest, res: Response) => {
  * Get store details by ID or username
  */
 export const getStore = async (req: Request, res: Response) => {
-  const { id } = req.params;
-  if (!id) throw new BadRequestError("Store ID required");
+  const { idOrSlug: identifier } = req.params;
 
-  const store = await StoreService.getStore(id);
+  if (!identifier || identifier.trim() === "") {
+    throw new BadRequestError("Store ID or username is required");
+  }
 
-  res.status(StatusCodes.OK).json({
+  const store = await StoreService.getStore(identifier);
+
+  if (!store) {
+    throw new NotFoundError(`Store  not found`);
+  }
+
+  return res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
     message: "Store retrieved successfully",
-    store,
+    data: store,
   });
 };
 
@@ -81,15 +91,38 @@ export const getAllStores = async (req: Request, res: Response) => {
 };
 
 /**
+ * 🧾 GET: /api/v1/admin/stores
+ * Get all stores (admin view — full details)
+ */
+export const getAllStoresAdmin = async (req: Request, res: Response) => {
+  const { page, limit } = req.query;
+
+  const result = await StoreService.getAllStoresAdmin(
+    Number(page) || 1,
+    Number(limit) || 20
+  );
+
+  res.status(StatusCodes.OK).json({
+    status: 1,
+    success: true,
+    message: "All stores retrieved successfully (admin view)",
+    ...result,
+  });
+};
+
+/**
  * 🧭 GET: /api/v1/stores/:store_id/products
  * Get all products for a store
  */
 export const getStoreProducts = async (req: Request, res: Response) => {
-  const { store_id } = req.params;
+  const { idOrSlug } = req.params;
   const { page, limit } = req.query;
 
+  if (!idOrSlug || idOrSlug.trim() === "")
+    throw new BadRequestError("Store ID or slug is required");
+
   const result = await StoreService.getStoreProducts(
-    store_id,
+    idOrSlug,
     Number(page) || 1,
     Number(limit) || 20
   );
@@ -106,14 +139,70 @@ export const getStoreProducts = async (req: Request, res: Response) => {
  * ✏️ PATCH: /api/v1/stores/:id
  * Update store info (vendor only)
  */
+
 export const updateStore = async (req: CustomRequest, res: Response) => {
+  const { id: storeId } = req.params;
+  if (!storeId) throw new BadRequestError("Store ID is required");
+
   if (!req.user)
-    throw new UnauthenticatedError("Please login to update a store");
+    throw new UnauthenticatedError("Please login to update your store");
 
-  const { id } = req.params;
-  if (!id) throw new BadRequestError("Store ID is required");
+  const updateData: Record<string, any> = { ...req.body };
 
-  const updated = await StoreService.updateStore(id, req.body);
+  // ✅ Parse address JSON if passed as string
+  if (updateData.address && typeof updateData.address === "string") {
+    try {
+      updateData.address = JSON.parse(updateData.address);
+    } catch {
+      throw new BadRequestError("Invalid address JSON format");
+    }
+  }
+
+  // ✅ Get current store record
+  const existingStore = await StoreService.getStore(storeId);
+
+  const files = req.files as {
+    logo?: Express.Multer.File[];
+    cover_image?: Express.Multer.File[];
+  };
+
+  const logoFile = files?.logo?.[0];
+  const coverFile = files?.cover_image?.[0];
+
+  if (logoFile) {
+    const fileStr = formatImage(logoFile);
+    const uploaded = await cloudinary.v2.uploader.upload(fileStr, {
+      folder: "easystore/stores/logos",
+      use_filename: true,
+    });
+
+    updateData.logo = uploaded.secure_url;
+    updateData.logo_public_id = uploaded.public_id;
+
+    // Delete old logo
+    if (existingStore.logo_public_id) {
+      await cloudinary.v2.uploader.destroy(existingStore.logo_public_id);
+    }
+  }
+
+  if (coverFile) {
+    const fileStr = formatImage(coverFile);
+    const uploaded = await cloudinary.v2.uploader.upload(fileStr, {
+      folder: "easystore/stores/covers",
+      use_filename: true,
+    });
+
+    updateData.cover_image = uploaded.secure_url;
+    updateData.cover_image_public_id = uploaded.public_id;
+
+    // Delete old cover image
+    if (existingStore.cover_image_public_id) {
+      await cloudinary.v2.uploader.destroy(existingStore.cover_image_public_id);
+    }
+  }
+
+  // ✅ Update store record
+  const updated = await StoreService.updateStore(storeId, updateData);
 
   res.status(StatusCodes.OK).json({
     status: 1,

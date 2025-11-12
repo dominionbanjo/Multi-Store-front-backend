@@ -59,25 +59,30 @@ export interface IStore {
   id: string;
   user_id: string;
   store_name: string;
-  username: string;
-  category: string | null; // ✅ new overall category
+  slug: string;
+  category: string | null;
   description: string | null;
+
+  /** 🖼️ Media */
   logo: string | null;
+  logo_public_id: string | null; // ✅ Added for Cloudinary management
   cover_image: string | null;
-  image: string | null;
+  cover_image_public_id: string | null; // ✅ Added for Cloudinary management
 
   /** 📞 Contact info */
   email: string | null;
   phone_number: string | null;
   website: string | null;
 
+  /** ⭐ Ratings */
   rating_average: number | null;
   rating_count: number | null;
   category_ids: string[] | null;
 
+  /** 📊 Stats */
   total_revenue: number | null;
   total_orders: number | null;
-  total_products: number | null; // ✅ new cached count
+  total_products: number | null;
   active_customers: number | null;
   products_listed: number | null;
 
@@ -92,13 +97,16 @@ export interface IStore {
   analytics: IAnalytics | null;
   customers: IStoreCustomer[] | null;
 
-  /** 🏠 Address (JSONB like UserModel) */
-  address: IStoreAddress | null; // ✅ new field
+  /** 🏠 Address */
+  address: IStoreAddress | null;
 
   created_at: string | null;
   updated_at: string | null;
 }
 
+// ────────────────────────────────────────────────
+// 🧱 StoreModel Schema
+// ────────────────────────────────────────────────
 class StoreModelClass extends BaseModel<IStore> {
   protected table = "stores";
 
@@ -114,9 +122,15 @@ class StoreModelClass extends BaseModel<IStore> {
       index: true,
     },
 
-    store_name: { type: "VARCHAR(255)", notNull: true },
-    username: {
-      type: "VARCHAR(100)",
+    store_name: {
+      type: "VARCHAR(255)",
+      notNull: true,
+      unique: true,
+      index: true,
+    },
+
+    slug: {
+      type: "VARCHAR(255)",
       notNull: true,
       unique: true,
       index: true,
@@ -128,8 +142,9 @@ class StoreModelClass extends BaseModel<IStore> {
 
     /** 🖼️ Media */
     logo: { type: "TEXT" },
+    logo_public_id: { type: "VARCHAR(255)" }, // ✅ Added
     cover_image: { type: "TEXT" },
-    image: { type: "TEXT" },
+    cover_image_public_id: { type: "VARCHAR(255)" }, // ✅ Added
 
     /** 📞 Contact */
     email: { type: "VARCHAR(255)" },
@@ -146,7 +161,7 @@ class StoreModelClass extends BaseModel<IStore> {
     /** 📊 Stats */
     total_revenue: { type: "NUMERIC(12,2)", default: "0" },
     total_orders: { type: "INT", default: "0" },
-    total_products: { type: "INT", default: "0" }, // ✅
+    total_products: { type: "INT", default: "0" },
     active_customers: { type: "INT", default: "0" },
     products_listed: { type: "INT", default: "0" },
 

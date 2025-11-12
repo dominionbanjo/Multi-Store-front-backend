@@ -3,6 +3,7 @@ import {
   createStore,
   getStore,
   getAllStores,
+  getAllStoresAdmin,
   getStoreProducts,
   updateStore,
   deleteStore,
@@ -10,7 +11,15 @@ import {
   updateBankAccount,
   deleteBankAccount,
 } from "../controllers/storeController.js";
-import { authenticateUser } from "../middlewares/authMiddleware.js";
+import {
+  authenticateUser,
+  authorizePermissions,
+} from "../middlewares/authMiddleware.js";
+import {
+  validateCreateStoreInput,
+  validateUpdateStoreInput,
+} from "../utils/validations/validateStore.js";
+import upload from "../utils/images/multer.js";
 
 const router = express.Router();
 
@@ -18,15 +27,36 @@ const router = express.Router();
 // 🌍 Public routes
 // ───────────────────────────────────────────────
 router.get("/", getAllStores);
-router.get("/:idOrUsername", getStore);
-router.get("/:store_id/products", getStoreProducts);
+router.get(
+  "/admin",
+  authenticateUser,
+  authorizePermissions("admin"),
+  getAllStoresAdmin
+);
+router.get("/:idOrSlug", getStore);
+router.get("/:idOrSlug/products", getStoreProducts);
 
 // ───────────────────────────────────────────────
 // 🔒 Protected routes (vendor only)
 // ───────────────────────────────────────────────
-router.post("/", authenticateUser, createStore);
-router.patch("/:id", authenticateUser, updateStore);
-router.delete("/:id", authenticateUser, deleteStore);
+router.post("/", authenticateUser, validateCreateStoreInput, createStore);
+router.patch(
+  "/:id",
+  authenticateUser,
+  authorizePermissions("vendor"),
+  upload.fields([
+    { name: "logo", maxCount: 1 },
+    { name: "cover_image", maxCount: 1 },
+  ]),
+  validateUpdateStoreInput,
+  updateStore
+);
+router.delete(
+  "/:id",
+  authenticateUser,
+  authorizePermissions("vendor"),
+  deleteStore
+);
 
 // ───────────────────────────────────────────────
 // 💳 Bank Account Management
