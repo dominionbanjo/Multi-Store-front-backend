@@ -9,47 +9,105 @@ const headers = {
   "Content-Type": "application/json",
 };
 
-/** 💳 Initialize payment */
+/**
+ * 🧾 Handle Paystack API errors gracefully
+ */
+const handlePaystackError = (error: any, context: string) => {
+  const status = error.response?.status;
+  const message =
+    error.response?.data?.message ||
+    error.message ||
+    "An unknown error occurred with Paystack";
+
+  if (status === 401)
+    throw new BadRequestError(
+      `Paystack authentication failed: Invalid API key`
+    );
+  if (status === 422)
+    throw new BadRequestError(
+      `${context} failed — invalid or unprocessable data`
+    );
+  if (status === 400)
+    throw new BadRequestError(`${context} failed — bad request`);
+  if (status === 404)
+    throw new BadRequestError(`${context} failed — endpoint not found`);
+
+  throw new BadRequestError(`${context} failed: ${message}`);
+};
+
+/**
+ * 💳 Initialize payment
+ */
 export const initializePaystackPayment = async (
   email: string,
   amount: number
 ) => {
-  const res = await axios.post(
-    `${PAYSTACK_BASE_URL}/transaction/initialize`,
-    {
-      email,
-      amount: Math.round(amount * 100),
-      currency: "NGN",
-    },
-    { headers }
-  );
-  return res.data.data;
+  try {
+    const res = await axios.post(
+      `${PAYSTACK_BASE_URL}/transaction/initialize`,
+      {
+        email,
+        amount: Math.round(amount * 100),
+        currency: "NGN",
+      },
+      { headers }
+    );
+    return res.data.data;
+  } catch (error: any) {
+    handlePaystackError(error, "Payment initialization");
+  }
 };
 
-/** ✅ Verify payment */
+/**
+ * ✅ Verify payment
+ */
 export const verifyPaystackPayment = async (reference: string) => {
-  const res = await axios.get(
-    `${PAYSTACK_BASE_URL}/transaction/verify/${reference}`,
-    {
-      headers,
-    }
-  );
-  return res.data.data;
+  try {
+    const res = await axios.get(
+      `${PAYSTACK_BASE_URL}/transaction/verify/${reference}`,
+      { headers }
+    );
+    return res.data.data;
+  } catch (error: any) {
+    handlePaystackError(error, "Payment verification");
+  }
 };
 
-/** 🏦 Verify bank account */
+/**
+ * 🏦 Verify bank account (with clear feedback)
+ */
 export const verifyBankAccount = async (
   account_number: string,
   bank_code: string
 ) => {
-  const res = await axios.get(
-    `${PAYSTACK_BASE_URL}/bank/resolve?account_number=${account_number}&bank_code=${bank_code}`,
-    { headers }
-  );
-  return res.data.data; // { account_name, account_number, bank_id, ... }
+  try {
+    const res = await axios.get(`${PAYSTACK_BASE_URL}/bank/resolve`, {
+      headers,
+      params: { account_number, bank_code },
+    });
+
+    const data = res.data?.data;
+
+    if (!data || !data.account_name) {
+      throw new BadRequestError(
+        "Bank verification failed — invalid account details"
+      );
+    }
+
+    return {
+      account_name: data.account_name,
+      account_number: data.account_number,
+      bank_id: data.bank_id,
+      bank_name: data.bank_name || "Unknown Bank",
+    };
+  } catch (error: any) {
+    handlePaystackError(error, "Bank verification");
+  }
 };
 
-/** 🧾 Create transfer recipient (one time per vendor) */
+/**
+ * 🧾 Create transfer recipient (for verified vendor accounts)
+ */
 export const createTransferRecipient = async ({
   name,
   account_number,
@@ -59,22 +117,34 @@ export const createTransferRecipient = async ({
   account_number: string;
   bank_code: string;
 }) => {
-  const res = await axios.post(
-    `${PAYSTACK_BASE_URL}/transferrecipient`,
-    {
-      type: "nuban",
-      name,
-      account_number,
-      bank_code,
-      currency: "NGN",
-    },
-    { headers }
-  );
+  try {
+    const res = await axios.post(
+      `${PAYSTACK_BASE_URL}/transferrecipient`,
+      {
+        type: "nuban",
+        name,
+        account_number,
+        bank_code,
+        currency: "NGN",
+      },
+      { headers }
+    );
 
-  return res.data.data.recipient_code;
+    const data = res.data?.data;
+
+    if (!data?.recipient_code) {
+      throw new BadRequestError("Unable to create Paystack transfer recipient");
+    }
+
+    return data.recipient_code;
+  } catch (error: any) {
+    handlePaystackError(error, "Transfer recipient creation");
+  }
 };
 
-/** 💸 Transfer funds from your Paystack balance to a vendor */
+/**
+ * 💸 Transfer funds from your Paystack balance to a vendor
+ */
 export const initiateTransfer = async ({
   recipient_code,
   amount,
@@ -84,18 +154,25 @@ export const initiateTransfer = async ({
   amount: number;
   reason: string;
 }) => {
-  if (!recipient_code) throw new BadRequestError("Recipient code required");
+  if (!recipient_code)
+    throw new BadRequestError(
+      "Recipient code required before initiating transfer"
+    );
 
-  const res = await axios.post(
-    `${PAYSTACK_BASE_URL}/transfer`,
-    {
-      source: "balance",
-      amount: Math.round(amount * 100),
-      recipient: recipient_code,
-      reason,
-    },
-    { headers }
-  );
+  try {
+    const res = await axios.post(
+      `${PAYSTACK_BASE_URL}/transfer`,
+      {
+        source: "balance",
+        amount: Math.round(amount * 100),
+        recipient: recipient_code,
+        reason,
+      },
+      { headers }
+    );
 
-  return res.data.data; // { transfer_code, status, ... }
+    return res.data?.data;
+  } catch (error: any) {
+    handlePaystackError(error, "Funds transfer");
+  }
 };

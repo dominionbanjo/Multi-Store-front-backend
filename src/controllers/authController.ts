@@ -35,7 +35,6 @@ export const register = async (req: Request, res: Response): Promise<void> => {
           id: storeId,
           user_id: user.id,
           store_name: body.store_name,
-          username: body.username,
           description: body.description ?? null,
           logo: null,
           cover_image: null,

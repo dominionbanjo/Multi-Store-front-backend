@@ -3,16 +3,24 @@ import {
   getCurrentUser,
   updateUser,
   getUserStores,
-  updateUserStore,
+  getAllUsers,
 } from "../controllers/userController.js";
-import { authenticateUser } from "../middlewares/authMiddleware.js";
-import upload from "../utils/images/multer.js";
 import {
-  validateUpdateUserInput,
-  validateUpdateStoreInput,
-} from "../utils/validations/index.js";
+  authenticateUser,
+  authorizePermissions,
+} from "../middlewares/authMiddleware.js";
+import upload from "../utils/images/multer.js";
+import { validateUpdateUserInput } from "../utils/validations/index.js";
 
 const router = express.Router();
+
+// 🧾 ADMIN: Get all users
+router.get(
+  "/all",
+  authenticateUser,
+  authorizePermissions("admin"),
+  getAllUsers
+);
 
 router.get("/", authenticateUser, getCurrentUser);
 router.patch(
@@ -23,11 +31,5 @@ router.patch(
   updateUser
 );
 router.get("/stores", authenticateUser, getUserStores);
-router.put(
-  "/stores/:storeId",
-  authenticateUser,
-  validateUpdateStoreInput,
-  updateUserStore
-);
 
 export default router;

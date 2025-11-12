@@ -1,5 +1,5 @@
-import { StoreModel } from "../config/db/models/StoreModel.js";
-import { UserModel } from "../config/db/models/UserModel.js";
+import { StoreModel, type IStore } from "../config/db/models/StoreModel.js";
+import { UserModel, type IUser } from "../config/db/models/UserModel.js";
 import { ProductModel } from "../config/db/models/ProductModel.js";
 import { BadRequestError, NotFoundError } from "../utils/errors/customError.js";
 
@@ -41,6 +41,7 @@ class UserService {
       "username",
       "current_sales_channel",
       "avatar",
+      "address",
       "avatar_public_id",
     ];
 
@@ -62,11 +63,44 @@ class UserService {
   }
 
   // ───────────────────────────────────────────────
+  // 👥 ADMIN: GET ALL USERS
+  // ───────────────────────────────────────────────
+
+  /** 🧾 Get all users (admin only, paginated + selected fields) */
+  static async getAllUsers(
+    options: { page?: number; limit?: number } = {}
+  ): Promise<{
+    users: Partial<IUser>[];
+    pagination: { page: number; limit: number; total: number };
+  }> {
+    const selectedFields: (keyof IUser)[] = [
+      "id",
+      "first_name",
+      "last_name",
+      "email",
+      "phone_number",
+      "account_type",
+      "email_verified",
+      "store_name",
+      "created_at",
+      "updated_at",
+    ];
+
+    const { data, pagination } = await UserModel.findSelected(
+      selectedFields,
+      {},
+      options
+    );
+
+    return { users: data, pagination };
+  }
+
+  // ───────────────────────────────────────────────
   // 🏪 STORE MANAGEMENT
   // ───────────────────────────────────────────────
 
   /** 🏬 Get all stores belonging to a user */
-  static async getStores(userId: string) {
+  static async getStores(userId: string): Promise<IStore[]> {
     if (!userId) throw new BadRequestError("User ID is required");
 
     const { data } = await StoreModel.findAll({ user_id: userId });
@@ -88,35 +122,6 @@ class UserService {
 
     delete (user as any).password;
     return { ...user, stores };
-  }
-
-  /** 🏪 Update a store (owned by the user) */
-  static async updateStore(storeId: string, data: Record<string, any>) {
-    if (!storeId) throw new BadRequestError("Store ID is required");
-
-    const allowedFields = [
-      "store_name",
-      "username",
-      "description",
-      "logo",
-      "cover_image",
-      "category_ids",
-    ];
-
-    const filtered: Record<string, any> = {};
-    for (const key of allowedFields) {
-      if (data[key] !== undefined) filtered[key] = data[key];
-    }
-
-    if (Object.keys(filtered).length === 0)
-      throw new BadRequestError("No valid fields to update");
-
-    const updated = await StoreModel.update(storeId, {
-      ...filtered,
-      updated_at: new Date().toISOString(),
-    });
-
-    return updated;
   }
 
   // ───────────────────────────────────────────────
@@ -177,12 +182,6 @@ class UserService {
   // ⚙️ ADMIN OPERATIONS
   // ───────────────────────────────────────────────
 
-  /** 🧾 Get all users (paginated) */
-  static async getAllUsers(page = 1, limit = 20) {
-    const { data, pagination } = await UserModel.findAll({}, { page, limit });
-    return { users: data, pagination };
-  }
-
   /** 🗑️ Delete a user and cascade all related entities */
   static async deleteUser(userId: string) {
     if (!userId) throw new BadRequestError("User ID is required");
@@ -190,6 +189,7 @@ class UserService {
     const user = await UserModel.findById(userId);
     if (!user) throw new NotFoundError("User not found");
 
+    // Cascading deletion logic could be extended here if needed
     await UserModel.delete(userId);
 
     return { success: true, message: "User deleted successfully" };

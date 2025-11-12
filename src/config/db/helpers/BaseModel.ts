@@ -61,10 +61,10 @@ export abstract class BaseModel<T extends Record<string, any>> {
       .join(",\n  ");
 
     await sql.unsafe(`
-    CREATE TABLE IF NOT EXISTS ${this.table} (
-      ${cols}
-    );
-  `);
+      CREATE TABLE IF NOT EXISTS ${this.table} (
+        ${cols}
+      );
+    `);
 
     // 2️⃣ Fetch existing columns in the DB
     const existingCols = await sql.unsafe<
@@ -72,10 +72,10 @@ export abstract class BaseModel<T extends Record<string, any>> {
         column_name: string;
       }[]
     >(`
-    SELECT column_name
-    FROM information_schema.columns
-    WHERE table_name = '${this.table}';
-  `);
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_name = '${this.table}';
+    `);
     const existingNames = existingCols.map((c) => c.column_name);
 
     // 3️⃣ Add any missing columns dynamically
@@ -102,22 +102,22 @@ export abstract class BaseModel<T extends Record<string, any>> {
       if (def.references) {
         const fkName = `fk_${this.table}_${name}`;
         const constraintQuery = `
-        DO $$
-        BEGIN
-          IF NOT EXISTS (
-            SELECT 1 FROM information_schema.table_constraints
-            WHERE constraint_name = '${fkName}'
-          ) THEN
-            ALTER TABLE ${this.table}
-            ADD CONSTRAINT ${fkName}
-            FOREIGN KEY (${name})
-            REFERENCES ${def.references}
-            ${def.onDelete ? `ON DELETE ${def.onDelete}` : ""}
-            ${def.onUpdate ? `ON UPDATE ${def.onUpdate}` : ""};
-          END IF;
-        END
-        $$;
-      `;
+          DO $$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.table_constraints
+              WHERE constraint_name = '${fkName}'
+            ) THEN
+              ALTER TABLE ${this.table}
+              ADD CONSTRAINT ${fkName}
+              FOREIGN KEY (${name})
+              REFERENCES ${def.references}
+              ${def.onDelete ? `ON DELETE ${def.onDelete}` : ""}
+              ${def.onUpdate ? `ON UPDATE ${def.onUpdate}` : ""};
+            END IF;
+          END
+          $$;
+        `;
         try {
           await sql.unsafe(constraintQuery);
         } catch (err) {
@@ -174,7 +174,7 @@ export abstract class BaseModel<T extends Record<string, any>> {
     if (!data || Object.keys(data).length === 0)
       throw new BadRequestError("No data provided");
 
-    this.validateData(data); // ✅ Validation before insert
+    this.validateData(data);
 
     const keys = Object.keys(data);
     const values = Object.values(data);
@@ -227,7 +227,7 @@ export abstract class BaseModel<T extends Record<string, any>> {
     if (!updates || Object.keys(updates).length === 0)
       throw new BadRequestError("No update data provided");
 
-    this.validateData(updates); // ✅ Validation before update
+    this.validateData(updates);
 
     const keys = Object.keys(updates);
     const values = Object.values(updates);
@@ -279,7 +279,12 @@ export abstract class BaseModel<T extends Record<string, any>> {
     options?: { page?: number; limit?: number }
   ): Promise<{
     data: T[];
-    pagination: { page: number; limit: number; total: number };
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      total_pages: number;
+    };
   }> {
     const page = options?.page ?? 1;
     const limit = options?.limit ?? 20;
@@ -304,8 +309,9 @@ export abstract class BaseModel<T extends Record<string, any>> {
       values
     );
     const total = parseInt(countResult.total, 10);
+    const total_pages = Math.ceil(total / limit);
 
-    return { data, pagination: { page, limit, total } };
+    return { data, pagination: { page, limit, total, total_pages } };
   }
 
   // ───────────────────────────────────────────────
@@ -317,7 +323,12 @@ export abstract class BaseModel<T extends Record<string, any>> {
     options?: { page?: number; limit?: number }
   ): Promise<{
     data: T[];
-    pagination: { page: number; limit: number; total: number };
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      total_pages: number;
+    };
   }> {
     if (!q || q.trim() === "")
       throw new BadRequestError("Search query is required");
@@ -335,13 +346,15 @@ export abstract class BaseModel<T extends Record<string, any>> {
       `SELECT * FROM ${this.table} WHERE ${searchConditions} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset};`,
       values
     );
+
     const [countResult] = await sql.unsafe<{ total: string }[]>(
       `SELECT COUNT(*) AS total FROM ${this.table} WHERE ${searchConditions};`,
       values
     );
     const total = parseInt(countResult.total, 10);
+    const total_pages = Math.ceil(total / limit);
 
-    return { data, pagination: { page, limit, total } };
+    return { data, pagination: { page, limit, total, total_pages } };
   }
 
   // ───────────────────────────────────────────────
@@ -349,5 +362,63 @@ export abstract class BaseModel<T extends Record<string, any>> {
   // ───────────────────────────────────────────────
   query() {
     return new QueryBuilder<T>(this.table);
+  }
+
+  // ───────────────────────────────────────────────
+  // ✅ FIND SELECTED FIELDS (Partial Projection)
+  // ───────────────────────────────────────────────
+  async findSelected<K extends keyof T>(
+    columns: K[],
+    filters?: Partial<T>,
+    options?: { page?: number; limit?: number }
+  ): Promise<{
+    data: Pick<T, K>[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      total_pages: number;
+    };
+  }> {
+    if (!columns || columns.length === 0)
+      throw new BadRequestError("You must specify columns to select");
+
+    // Validate that all columns exist in schema
+    for (const col of columns) {
+      if (!(col in this.schema)) {
+        throw new BadRequestError(`Invalid column selected: ${String(col)}`);
+      }
+    }
+
+    const page = options?.page ?? 1;
+    const limit = options?.limit ?? 20;
+    const offset = (page - 1) * limit;
+
+    const values: any[] = [];
+    let whereClause = "";
+    if (filters && Object.keys(filters).length > 0) {
+      const keys = Object.keys(filters);
+      whereClause =
+        "WHERE " + keys.map((k, i) => `${k} = $${i + 1}`).join(" AND ");
+      values.push(...Object.values(filters));
+    }
+
+    const selectClause = columns.map((col) => `"${String(col)}"`).join(", ");
+
+    const data = await sql.unsafe<Pick<T, K>[]>(
+      `SELECT ${selectClause} FROM ${this.table} ${whereClause}
+       ORDER BY created_at DESC
+       LIMIT ${limit} OFFSET ${offset};`,
+      values
+    );
+
+    const [countResult] = await sql.unsafe<{ total: string }[]>(
+      `SELECT COUNT(*) AS total FROM ${this.table} ${whereClause};`,
+      values
+    );
+    const total = parseInt(countResult.total, 10);
+    const total_pages = Math.ceil(total / limit);
+
+    return { data, pagination: { page, limit, total, total_pages } };
   }
 }

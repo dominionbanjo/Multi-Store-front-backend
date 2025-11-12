@@ -4,7 +4,7 @@ export interface IProduct {
   id: string;
   vendor_id: string;
   store_id: string;
-  category_id: string;
+  category: string;
   name: string;
   slug: string;
   description: string | null;
@@ -15,13 +15,11 @@ export interface IProduct {
   image: string | null;
   gallery: string[] | null;
 
-  // 🆕 Additions to support frontend data
   highlights: string[] | null;
   specs: Record<string, string> | null;
   colors: string[] | null;
   sizes: string[] | null;
 
-  // 🆕 Shipping & Returns
   shipping_note: string | null;
   returns_note: string | null;
   location: string | null;
@@ -37,9 +35,9 @@ export interface IProduct {
 
 /**
  * 🛍️ Product Model
- * - Validates numeric fields (price, stock, shipping)
- * - Enforces required vendor/store/category linkage
- * - Supports flexible frontend properties (highlights, specs, etc.)
+ * - Uses category name as a foreign key to product_categories
+ * - Ensures no invalid category can be used
+ * - Simplifies lookups while keeping data relationally valid
  */
 class ProductModelClass extends BaseModel<IProduct> {
   protected table = "products";
@@ -65,11 +63,11 @@ class ProductModelClass extends BaseModel<IProduct> {
       index: true,
     },
 
-    category_id: {
-      type: "UUID",
+    category: {
+      type: "VARCHAR(100)",
       notNull: true,
-      notNullMessage: "Category is required",
-      references: "product_categories(id)",
+      notNullMessage: "Category name is required",
+      references: "product_categories(name)",
       onDelete: "RESTRICT",
       onUpdate: "CASCADE",
       index: true,

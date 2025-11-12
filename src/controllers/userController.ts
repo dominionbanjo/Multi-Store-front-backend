@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import cloudinary from "cloudinary";
 import User from "../services/userService.js";
+import Store from "../services/storeService.js";
 import { formatImage } from "../utils/images/multer.js";
 import {
   UnauthenticatedError,
@@ -17,6 +18,7 @@ interface CustomRequest extends Request {
   file?: Express.Multer.File;
 }
 
+/** 👤 Get current user profile */
 export const getCurrentUser = async (
   req: CustomRequest,
   res: Response
@@ -33,6 +35,7 @@ export const getCurrentUser = async (
   });
 };
 
+/** ✏️ Update user profile (form-data) */
 export const updateUser = async (
   req: CustomRequest,
   res: Response
@@ -43,8 +46,19 @@ export const updateUser = async (
   const userId = req.user.userId;
   const updateData: Record<string, any> = { ...req.body };
 
+  // Parse address JSON if provided (from form-data string)
+  if (updateData.address && typeof updateData.address === "string") {
+    try {
+      updateData.address = JSON.parse(updateData.address);
+    } catch {
+      throw new BadRequestError("Invalid address JSON format");
+    }
+  }
+
+  // Fetch existing user for cloudinary cleanup
   const existingUser = await User.getProfile(userId);
 
+  // Handle avatar upload
   if (req.file) {
     const fileStr = formatImage(req.file);
     const uploaded = await cloudinary.v2.uploader.upload(fileStr, {
@@ -55,12 +69,14 @@ export const updateUser = async (
     updateData.avatar = uploaded.secure_url;
     updateData.avatar_public_id = uploaded.public_id;
 
+    // Remove old avatar if it exists
     if (existingUser?.avatar_public_id) {
       await cloudinary.v2.uploader.destroy(existingUser.avatar_public_id);
     }
   }
 
   const updatedUser = await User.updateProfile(userId, updateData);
+
   res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
@@ -69,6 +85,7 @@ export const updateUser = async (
   });
 };
 
+/** 🏬 Get all user stores */
 export const getUserStores = async (
   req: CustomRequest,
   res: Response
@@ -85,18 +102,23 @@ export const getUserStores = async (
   });
 };
 
-export const updateUserStore = async (
-  req: CustomRequest,
+/** 👥 Get all users (admin only) */
+export const getAllUsers = async (
+  req: Request,
   res: Response
 ): Promise<void> => {
-  const { storeId } = req.params as { storeId?: string };
-  if (!storeId) throw new BadRequestError("Store ID is required");
+  const { page = 1, limit = 20 } = req.query;
 
-  const updated = await User.updateStore(storeId, req.body);
+  const { users, pagination } = await User.getAllUsers({
+    page: Number(page),
+    limit: Number(limit),
+  });
+
   res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
-    message: "Store updated successfully",
-    store: updated,
+    message: "All users retrieved successfully",
+    users,
+    pagination,
   });
 };
