@@ -2,7 +2,7 @@ import express from "express";
 import {
   getAllProducts,
   getProduct,
-  getByVendorOrStore,
+  getProductsByStore,
   searchProducts,
   createProduct,
   updateProduct,
@@ -29,8 +29,7 @@ const router = express.Router();
 // ───────────────────────────────────────────────
 router.get("/", getAllProducts);
 router.get("/search", searchProducts);
-router.get("/vendor/:vendor_id", getByVendorOrStore);
-router.get("/store/:store_id", getByVendorOrStore);
+router.get("/store/:store_id", getProductsByStore);
 router.get("/:idOrSlug", getProduct);
 
 // ───────────────────────────────────────────────

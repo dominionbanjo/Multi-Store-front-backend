@@ -99,7 +99,7 @@ const port = process.env.PORT || 5300;
 
 try {
   console.log("🔄 Syncing database models...");
-  await syncAllModels();
+  // await syncAllModels();
   console.log("✅ All models synced successfully");
 
   app.listen(port, () => {

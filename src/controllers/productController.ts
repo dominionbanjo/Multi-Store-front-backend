@@ -61,7 +61,7 @@ export const getProduct = async (req: Request, res: Response) => {
 /**
  * 🏬 GET BY STORE OR VENDOR
  */
-export const getByVendorOrStore = async (req: Request, res: Response) => {
+export const getProductsByStore = async (req: Request, res: Response) => {
   const { store_id } = req.params;
   const { page, limit } = req.query;
 

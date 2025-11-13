@@ -45,6 +45,7 @@ export interface IProduct {
 
   created_at: string | null;
   updated_at: string | null;
+  search_vector: string | null;
 }
 
 class ProductModelClass extends BaseModel<IProduct> {
@@ -102,6 +103,8 @@ class ProductModelClass extends BaseModel<IProduct> {
 
     created_at: { type: "TIMESTAMPTZ", default: "NOW()" },
     updated_at: { type: "TIMESTAMPTZ", default: "NOW()" },
+
+    search_vector: { type: "TSVECTOR" },
   };
 }
 

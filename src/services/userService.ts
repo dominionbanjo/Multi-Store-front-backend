@@ -109,7 +109,7 @@ class UserService {
 
     const { data, pagination } = await UserModel.findSelected(
       selectedFields,
-      {},
+      undefined,
       options
     );
 
