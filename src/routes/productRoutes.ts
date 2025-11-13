@@ -7,6 +7,7 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
+  createStoreProduct,
 } from "../controllers/productController.js";
 
 import {
@@ -19,41 +20,69 @@ import {
   validateUpdateProduct,
 } from "../utils/validations/productValidation.js";
 
+import upload from "../utils/images/multer.js";
+
 const router = express.Router();
 
 // ───────────────────────────────────────────────
 // 🧾 PUBLIC PRODUCT ROUTES
 // ───────────────────────────────────────────────
-router.get("/", getAllProducts); // GET /api/v1/products
-router.get("/search", searchProducts); // GET /api/v1/products/search?q=keyword
-router.get("/vendor/:vendor_id", getByVendorOrStore); // GET /api/v1/products/vendor/:vendor_id
-router.get("/store/:store_id", getByVendorOrStore); // GET /api/v1/products/store/:store_id
-router.get("/:idOrSlug", getProduct); // GET /api/v1/products/:idOrSlug
+router.get("/", getAllProducts);
+router.get("/search", searchProducts);
+router.get("/vendor/:vendor_id", getByVendorOrStore);
+router.get("/store/:store_id", getByVendorOrStore);
+router.get("/:idOrSlug", getProduct);
 
 // ───────────────────────────────────────────────
-// 🔐 PROTECTED PRODUCT ROUTES (Vendor or Admin only)
+// 🔐 PROTECTED PRODUCT ROUTES (Vendor/Admin)
 // ───────────────────────────────────────────────
+
+// ➕ CREATE PRODUCT FOR A SPECIFIC STORE
+
+// ➕ CREATE PRODUCT (with images)
 router.post(
   "/",
   authenticateUser,
   authorizePermissions("vendor", "admin"),
+  upload.fields([
+    { name: "image", maxCount: 1 }, // single main image
+    { name: "gallery", maxCount: 10 }, // multiple gallery images
+  ]),
   validateCreateProduct,
   createProduct
-); // POST /api/v1/products
+);
 
+router.post(
+  "/store/:store_id",
+  authenticateUser,
+  authorizePermissions("vendor", "admin"),
+  upload.fields([
+    { name: "image", maxCount: 1 },
+    { name: "gallery", maxCount: 10 },
+  ]),
+  validateCreateProduct,
+  createStoreProduct
+);
+
+// ✏️ UPDATE PRODUCT (with images)
 router.patch(
   "/:id",
   authenticateUser,
   authorizePermissions("vendor", "admin"),
+  upload.fields([
+    { name: "image", maxCount: 1 }, // optional replacement
+    { name: "gallery", maxCount: 10 }, // optional gallery append/replace
+  ]),
   validateUpdateProduct,
   updateProduct
-); // PATCH /api/v1/products/:id
+);
 
+// ❌ DELETE PRODUCT
 router.delete(
   "/:id",
   authenticateUser,
   authorizePermissions("vendor", "admin"),
   deleteProduct
-); // DELETE /api/v1/products/:id
+);
 
 export default router;

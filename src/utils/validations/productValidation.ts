@@ -7,24 +7,41 @@ import sql from "../../config/connect.js";
 // ───────────────────────────────────────────────
 const ALLOWED_CREATE_PRODUCT_FIELDS = [
   "name",
-  "slug",
-  "category_id",
+  "category",
   "price",
   "discount_price",
   "stock",
   "description",
   "tags",
+  "gallery",
+  "highlights",
+  "specs",
+  "colors",
+  "sizes",
+  "shipping_note",
+  "returns_note",
+  "location",
+  "shipping_cost",
 ];
 
 const ALLOWED_UPDATE_PRODUCT_FIELDS = [
   "name",
   "slug",
-  "category_id",
   "price",
+  "category",
   "discount_price",
   "stock",
   "description",
   "tags",
+  "gallery",
+  "highlights",
+  "specs",
+  "colors",
+  "sizes",
+  "shipping_note",
+  "returns_note",
+  "location",
+  "shipping_cost",
 ];
 
 const ALLOWED_ADD_REVIEW_FIELDS = ["rating", "comment", "product_id"];
@@ -34,58 +51,38 @@ const ALLOWED_ADD_REVIEW_FIELDS = ["rating", "comment", "product_id"];
 // ───────────────────────────────────────────────
 export const validateCreateProduct = withValidationErrors(
   [
-    body("name")
-      .notEmpty()
-      .withMessage("Product name is required")
-      .isString()
-      .withMessage("Invalid product name"),
+    body("name").notEmpty().withMessage("Product name is required"),
 
-    body("slug")
+    body("category").notEmpty().withMessage("Category is required").isString(),
+
+    body("price").notEmpty(),
+
+    body("discount_price").optional(),
+    body("stock").optional(),
+    body("tags").optional().isArray(),
+
+    body("highlights").optional().isArray(),
+
+    body("specs")
       .optional()
-      .isSlug()
-      .withMessage("Slug must be URL-friendly")
-      .custom(async (slug) => {
-        const result = await sql`SELECT id FROM products WHERE slug = ${slug}`;
-        if (result.length > 0) throw new Error("Slug already in use");
+      .custom((value) => {
+        if (typeof value === "string") {
+          try {
+            JSON.parse(value);
+            return true;
+          } catch {
+            throw new Error("Specs must be valid JSON");
+          }
+        }
+        if (typeof value === "object") return true;
+        throw new Error("Specs must be a valid JSON object");
       }),
 
-    body("category_id")
-      .notEmpty()
-      .withMessage("Category ID is required")
-      .isUUID()
-      .withMessage("Invalid category ID format")
-      .custom(async (category_id) => {
-        const result =
-          await sql`SELECT id FROM product_categories WHERE id = ${category_id}`;
-        if (result.length === 0)
-          throw new Error("Category does not exist in product_categories");
-      }),
+    body("colors").optional().isArray(),
 
-    body("price")
-      .notEmpty()
-      .withMessage("Price is required")
-      .isFloat({ gt: 0 })
-      .withMessage("Price must be a positive number"),
+    body("sizes").optional().isArray(),
 
-    body("discount_price")
-      .optional()
-      .isFloat({ gt: 0 })
-      .withMessage("Discount price must be positive"),
-
-    body("stock")
-      .optional()
-      .isInt({ min: 0 })
-      .withMessage("Stock must be a non-negative integer"),
-
-    body("description")
-      .optional()
-      .isString()
-      .withMessage("Description must be a string"),
-
-    body("tags")
-      .optional()
-      .isArray()
-      .withMessage("Tags must be an array of strings"),
+    body("shipping_cost").optional(),
   ],
   ALLOWED_CREATE_PRODUCT_FIELDS
 );
@@ -95,58 +92,58 @@ export const validateCreateProduct = withValidationErrors(
 // ───────────────────────────────────────────────
 export const validateUpdateProduct = withValidationErrors(
   [
-    body("name").optional().isString().withMessage("Invalid product name"),
+    body("name").optional().isString(),
 
-    body("slug")
+    body("category").optional().isString(),
+
+    body("price").optional(),
+
+    body("discount_price").optional(),
+
+    body("stock").optional().isInt({ min: 0 }),
+
+    body("tags").optional().isArray(),
+
+    body("highlights").optional().isArray(),
+
+    body("specs")
       .optional()
-      .isSlug()
-      .withMessage("Slug must be URL-friendly")
-      .custom(async (slug, { req }) => {
-        const productId = req.params?.id ?? null;
-        const result = await sql`SELECT id FROM products WHERE slug = ${slug}`;
-        const product = result[0];
-        if (product && product.id !== productId) {
-          throw new Error("Slug already in use by another product");
+      .custom((value) => {
+        if (typeof value === "string") {
+          try {
+            JSON.parse(value);
+            return true;
+          } catch {
+            throw new Error("Specs must be valid JSON");
+          }
         }
+        if (typeof value === "object") return true;
+        throw new Error("Specs must be a JSON object");
       }),
 
-    body("category_id")
-      .optional()
-      .isUUID()
-      .withMessage("Invalid category ID format")
-      .custom(async (category_id) => {
-        const result =
-          await sql`SELECT id FROM product_categories WHERE id = ${category_id}`;
-        if (result.length === 0)
-          throw new Error("Category does not exist in product_categories");
-      }),
+    body("colors").optional().isArray(),
 
-    body("price")
-      .optional()
-      .isFloat({ gt: 0 })
-      .withMessage("Price must be a positive number"),
+    body("sizes").optional().isArray(),
 
-    body("discount_price")
-      .optional()
-      .isFloat({ gt: 0 })
-      .withMessage("Discount price must be positive"),
-
-    body("stock")
-      .optional()
-      .isInt({ min: 0 })
-      .withMessage("Stock must be a non-negative integer"),
-
-    body("description")
-      .optional()
-      .isString()
-      .withMessage("Description must be a string"),
-
-    body("tags")
-      .optional()
-      .isArray()
-      .withMessage("Tags must be an array of strings"),
+    body("shipping_cost").optional(),
   ],
-  ALLOWED_UPDATE_PRODUCT_FIELDS
+  [
+    "name",
+    "category",
+    "price",
+    "discount_price",
+    "stock",
+    "description",
+    "tags",
+    "highlights",
+    "specs",
+    "colors",
+    "sizes",
+    "shipping_note",
+    "returns_note",
+    "location",
+    "shipping_cost",
+  ]
 );
 
 // ───────────────────────────────────────────────

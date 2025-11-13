@@ -12,5 +12,6 @@ export { OrderModel } from "./OrderModel.js";
 export { DeliveryModel } from "./DeliveryModel.js";
 export { EscrowModel } from "./EscrowModel.js";
 export { TransactionModel } from "./TransactionModel.js";
+export { ProductColorModel } from "./ColorModel.js";
 // export { AddressModel } from "./AddressModel.js";
 export { BaseModel } from "../helpers/BaseModel.js";

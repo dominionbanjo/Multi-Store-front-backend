@@ -46,8 +46,8 @@ export const updateUser = async (
   const userId = req.user.userId;
   const updateData: Record<string, any> = { ...req.body };
 
-  // Parse address JSON if provided (from form-data string)
-  if (updateData.address && typeof updateData.address === "string") {
+  // Parse address JSON if provided
+  if (typeof updateData.address === "string") {
     try {
       updateData.address = JSON.parse(updateData.address);
     } catch {
@@ -55,27 +55,11 @@ export const updateUser = async (
     }
   }
 
-  // Fetch existing user for cloudinary cleanup
-  const existingUser = await User.getProfile(userId);
-
-  // Handle avatar upload
-  if (req.file) {
-    const fileStr = formatImage(req.file);
-    const uploaded = await cloudinary.v2.uploader.upload(fileStr, {
-      use_filename: true,
-      folder: "easystore",
-    });
-
-    updateData.avatar = uploaded.secure_url;
-    updateData.avatar_public_id = uploaded.public_id;
-
-    // Remove old avatar if it exists
-    if (existingUser?.avatar_public_id) {
-      await cloudinary.v2.uploader.destroy(existingUser.avatar_public_id);
-    }
-  }
-
-  const updatedUser = await User.updateProfile(userId, updateData);
+  const updatedUser = await User.updateProfile(
+    userId,
+    updateData,
+    req.file // <-- file is now handled inside the service
+  );
 
   res.status(StatusCodes.OK).json({
     status: 1,

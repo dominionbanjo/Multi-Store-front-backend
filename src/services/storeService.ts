@@ -7,6 +7,7 @@ import {
   createTransferRecipient,
   verifyBankAccount,
 } from "../utils/payment/paystack.js";
+import UploadService from "./uploadService.js";
 
 class StoreService {
   // ───────────────────────────────────────────────
@@ -122,7 +123,7 @@ class StoreService {
       })
     );
 
-    return { stores: enrichedStores, pagination };
+    return { pagination, stores: enrichedStores };
   }
 
   // ───────────────────────────────────────────────
@@ -142,8 +143,8 @@ class StoreService {
     );
 
     return {
-      data: enrichedStores,
       pagination,
+      data: enrichedStores,
     };
   }
 
@@ -172,46 +173,80 @@ class StoreService {
       { page, limit }
     );
 
-    return { products: data, pagination };
+    return { pagination, products: data };
   }
   // ───────────────────────────────────────────────
   // ✏️ UPDATE STORE
   // ───────────────────────────────────────────────
   // inside StoreService
-  static async updateStore(storeId: string, data: Record<string, any>) {
+  static async updateStore(
+    storeId: string,
+    data: Record<string, any>,
+    files?: {
+      logo?: Express.Multer.File;
+      cover_image?: Express.Multer.File;
+    }
+  ) {
     if (!storeId) throw new BadRequestError("Store ID is required");
 
-    // ✅ Verify store exists
     const existingStore = await StoreModel.findById(storeId);
     if (!existingStore) throw new NotFoundError("Store not found");
 
-    // ✅ Define allowed update fields
     const allowedFields = [
       "store_name",
       "description",
-      "logo",
-      "logo_public_id",
-      "cover_image",
-      "cover_image_public_id",
       "category",
       "category_ids",
       "email",
       "phone_number",
       "website",
       "address",
+      "logo",
+      "logo_public_id",
+      "cover_image",
+      "cover_image_public_id",
     ];
-    // ✅ Filter only allowed fields
+
     const filtered: Record<string, any> = {};
     for (const key of allowedFields) {
       if (data[key] !== undefined) filtered[key] = data[key];
     }
 
-    // ✅ If no valid fields, throw
-    if (Object.keys(filtered).length === 0) {
-      throw new BadRequestError("No valid fields to update");
+    // ---------------------------
+    // 📸 Handle Logo Upload
+    // ---------------------------
+    if (files?.logo) {
+      const logoUpload = await UploadService.uploadSingle(
+        files.logo,
+        "easystore/stores/logos"
+      );
+
+      filtered.logo = logoUpload?.url;
+      filtered.logo_public_id = logoUpload?.public_id;
+
+      if (existingStore.logo_public_id) {
+        await UploadService.deleteSingle(existingStore.logo_public_id);
+      }
     }
 
-    // ✅ If store_name is being changed, check for duplicates
+    // ---------------------------
+    // 📸 Handle Cover Image Upload
+    // ---------------------------
+    if (files?.cover_image) {
+      const coverUpload = await UploadService.uploadSingle(
+        files.cover_image,
+        "easystore/stores/covers"
+      );
+
+      filtered.cover_image = coverUpload?.url;
+      filtered.cover_image_public_id = coverUpload?.public_id;
+
+      if (existingStore.cover_image_public_id) {
+        await UploadService.deleteSingle(existingStore.cover_image_public_id);
+      }
+    }
+
+    // If store_name changed → regenerate slug
     if (
       filtered.store_name &&
       filtered.store_name.toLowerCase() !==
@@ -220,21 +255,20 @@ class StoreService {
       const duplicate = await StoreModel.findOne({
         store_name: filtered.store_name,
       });
+
       if (duplicate && duplicate.id !== storeId) {
-        throw new BadRequestError("Store name already in use by another store");
+        throw new BadRequestError("Store name already in use");
       }
 
-      // ✅ Generate new unique slug if name changes
       filtered.slug = await this.generateUniqueSlug(filtered.store_name);
     }
 
-    // ✅ Apply updates
-    const updatedStore = await StoreModel.update(storeId, {
+    const updated = await StoreModel.update(storeId, {
       ...filtered,
       updated_at: new Date().toISOString(),
     });
 
-    return updatedStore;
+    return updated;
   }
 
   // ───────────────────────────────────────────────

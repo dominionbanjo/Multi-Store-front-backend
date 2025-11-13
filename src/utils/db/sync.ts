@@ -10,6 +10,7 @@ import {
   DeliveryModel,
   EscrowModel,
   TransactionModel,
+  ProductColorModel,
 } from "../../config/db/models/index.js";
 
 /**
@@ -22,6 +23,7 @@ export async function syncAllModels() {
   try {
     // Independent roots
     await ProductCategoryModel.sync();
+    await ProductColorModel.sync();
     await UserModel.sync();
 
     // Dependent on users

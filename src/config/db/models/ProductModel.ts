@@ -1,5 +1,15 @@
 import { BaseModel, SchemaDefinition } from "../helpers/BaseModel.js";
 
+export interface IProductImage {
+  url: string;
+  public_id: string;
+}
+
+export interface IProductGalleryItem {
+  url: string;
+  public_id: string;
+}
+
 export interface IProduct {
   id: string;
   vendor_id: string;
@@ -8,12 +18,16 @@ export interface IProduct {
   name: string;
   slug: string;
   description: string | null;
+
   price: number;
   discount_price: number | null;
   stock: number;
+
   tags: string[] | null;
-  image: string | null;
-  gallery: string[] | null;
+
+  // ⭐ FIXED
+  image: IProductImage | null; // <-- FIXED: WAS string
+  gallery: IProductGalleryItem[] | null; // <-- FIXED
 
   highlights: string[] | null;
   specs: Record<string, string> | null;
@@ -33,12 +47,6 @@ export interface IProduct {
   updated_at: string | null;
 }
 
-/**
- * 🛍️ Product Model
- * - Uses category name as a foreign key to product_categories
- * - Ensures no invalid category can be used
- * - Simplifies lookups while keeping data relationally valid
- */
 class ProductModelClass extends BaseModel<IProduct> {
   protected table = "products";
 
@@ -48,71 +56,35 @@ class ProductModelClass extends BaseModel<IProduct> {
     vendor_id: {
       type: "UUID",
       notNull: true,
-      notNullMessage: "Vendor ID is required",
       references: "users(id)",
       onDelete: "CASCADE",
-      onUpdate: "CASCADE",
-      index: true,
     },
 
     store_id: {
       type: "UUID",
       references: "stores(id)",
       onDelete: "CASCADE",
-      onUpdate: "CASCADE",
-      index: true,
     },
 
     category: {
       type: "VARCHAR(100)",
       notNull: true,
-      notNullMessage: "Category name is required",
       references: "product_categories(name)",
-      onDelete: "RESTRICT",
-      onUpdate: "CASCADE",
-      index: true,
     },
 
-    name: {
-      type: "VARCHAR(255)",
-      notNull: true,
-      notNullMessage: "Product name is required",
-      index: true,
-    },
-
-    slug: {
-      type: "VARCHAR(255)",
-      unique: true,
-      notNull: true,
-      notNullMessage: "Slug is required",
-      index: true,
-    },
-
+    name: { type: "VARCHAR(255)", notNull: true },
+    slug: { type: "VARCHAR(255)", unique: true, notNull: true },
     description: { type: "TEXT" },
 
-    price: {
-      type: "NUMERIC(10,2)",
-      notNull: true,
-      notNullMessage: "Price is required",
-      min: 1,
-    },
-
-    discount_price: {
-      type: "NUMERIC(10,2)",
-      min: 0,
-      max: 9999999,
-    },
-
-    stock: {
-      type: "INT",
-      default: "0",
-      notNull: true,
-      min: 0,
-    },
+    price: { type: "NUMERIC(10,2)", notNull: true },
+    discount_price: { type: "NUMERIC(10,2)" },
+    stock: { type: "INT", default: "0", notNull: true },
 
     tags: { type: "TEXT[]" },
-    image: { type: "TEXT" },
-    gallery: { type: "TEXT[]" },
+
+    // ⭐ FIXED
+    image: { type: "JSONB" }, // <-- FIXED
+    gallery: { type: "JSONB" }, // <-- FIXED
 
     highlights: { type: "TEXT[]" },
     specs: { type: "JSONB" },
@@ -122,12 +94,7 @@ class ProductModelClass extends BaseModel<IProduct> {
     shipping_note: { type: "TEXT" },
     returns_note: { type: "TEXT" },
     location: { type: "VARCHAR(255)" },
-
-    shipping_cost: {
-      type: "NUMERIC(10,2)",
-      min: 0,
-      max: 100000,
-    },
+    shipping_cost: { type: "NUMERIC(10,2)" },
 
     rating_average: { type: "NUMERIC(3,2)", default: "0" },
     rating_count: { type: "INT", default: "0" },
