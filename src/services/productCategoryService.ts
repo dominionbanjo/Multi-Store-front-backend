@@ -105,12 +105,24 @@ class ProductCategoryService {
   /**
    * 📂 Get subcategories of a parent
    */
-  static async getSubcategories(parent_id: string) {
-    if (!parent_id) throw new BadRequestError("Parent ID required");
+  static async getSubcategories(identifier: string) {
+    if (!identifier) throw new BadRequestError("Parent identifier required");
 
+    // Detect if identifier is UUID or slug
+    const isUUID = /^[0-9a-f-]{36}$/.test(identifier);
+
+    // Find parent category
+    const parent = isUUID
+      ? await ProductCategoryModel.findOne({ id: identifier })
+      : await ProductCategoryModel.findOne({ slug: identifier });
+
+    if (!parent) throw new NotFoundError("Parent category not found");
+
+    // Fetch subcategories using the resolved parent.id
     const subcategories = await ProductCategoryModel.getSubcategories(
-      parent_id
+      parent.id
     );
+
     return subcategories;
   }
 }

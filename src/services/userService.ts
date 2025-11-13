@@ -2,6 +2,7 @@ import { StoreModel, type IStore } from "../config/db/models/StoreModel.js";
 import { UserModel, type IUser } from "../config/db/models/UserModel.js";
 import { ProductModel } from "../config/db/models/ProductModel.js";
 import { BadRequestError, NotFoundError } from "../utils/errors/customError.js";
+import UploadService from "./uploadService.js";
 
 /**
  * 👤 UserService
@@ -30,8 +31,28 @@ class UserService {
   }
 
   /** ✏️ Update user profile (with whitelisted fields only) */
-  static async updateProfile(userId: string, data: Record<string, any>) {
+  static async updateProfile(
+    userId: string,
+    data: Record<string, any>,
+    file?: Express.Multer.File
+  ) {
     if (!userId) throw new BadRequestError("User ID is required");
+
+    // Fetch user for old avatar cleanup
+    const existingUser = await UserModel.findById(userId);
+
+    // Handle uploaded avatar
+    if (file) {
+      const avatar = await UploadService.uploadSingle(file, "easystore/users");
+
+      data.avatar = avatar?.url;
+      data.avatar_public_id = avatar?.public_id;
+
+      // Remove old avatar
+      if (existingUser.avatar_public_id) {
+        await UploadService.deleteSingle(existingUser.avatar_public_id);
+      }
+    }
 
     const allowedFields = [
       "first_name",
@@ -88,11 +109,11 @@ class UserService {
 
     const { data, pagination } = await UserModel.findSelected(
       selectedFields,
-      {},
+      undefined,
       options
     );
 
-    return { users: data, pagination };
+    return { pagination, users: data };
   }
 
   // ───────────────────────────────────────────────
@@ -118,10 +139,12 @@ class UserService {
     const user = await UserModel.findById(userId);
     if (!user) throw new NotFoundError("User not found");
 
-    const { data: stores } = await StoreModel.findAll({ user_id: userId });
+    const { data: stores, pagination } = await StoreModel.findAll({
+      user_id: userId,
+    });
 
     delete (user as any).password;
-    return { ...user, stores };
+    return { pagination, ...user, stores };
   }
 
   // ───────────────────────────────────────────────

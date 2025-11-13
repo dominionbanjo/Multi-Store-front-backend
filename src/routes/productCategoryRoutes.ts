@@ -8,9 +8,9 @@ import {
   getSubcategories,
 } from "../controllers/productCategoryController.js";
 import {
-  authenticateUser,
-  authorizePermissions,
-} from "../middlewares/authMiddleware.js";
+  validateCreateCategory,
+  validateUpdateCategory,
+} from "../utils/validations/categoryValidation.js";
 
 const router = express.Router();
 
@@ -19,28 +19,13 @@ const router = express.Router();
  */
 router.get("/", getAllCategories);
 router.get("/:idOrSlug", getCategory);
-router.get("/parent/:parent_id/subcategories", getSubcategories);
+router.get("/:idOrSlug/subcategories", getSubcategories);
 
 /**
  * 🔒 Protected (Admin)
  */
-router.post(
-  "/",
-  authenticateUser,
-  authorizePermissions("admin"),
-  createCategory
-);
-router.patch(
-  "/:id",
-  authenticateUser,
-  authorizePermissions("admin"),
-  updateCategory
-);
-router.delete(
-  "/:id",
-  authenticateUser,
-  authorizePermissions("admin"),
-  deleteCategory
-);
+router.post("/", validateCreateCategory, createCategory);
+router.patch("/:id", validateUpdateCategory, updateCategory);
+router.delete("/:id", deleteCategory);
 
 export default router;

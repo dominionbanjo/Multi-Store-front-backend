@@ -47,10 +47,8 @@ export const deleteCategory = async (req: Request, res: Response) => {
 };
 
 export const getSubcategories = async (req: Request, res: Response) => {
-  const { parent_id } = req.params;
-  const subcategories = await ProductCategoryService.getSubcategories(
-    parent_id
-  );
+  const { idOrSlug } = req.params;
+  const subcategories = await ProductCategoryService.getSubcategories(idOrSlug);
   res.status(StatusCodes.OK).json({
     success: true,
     message: "Subcategories retrieved successfully",

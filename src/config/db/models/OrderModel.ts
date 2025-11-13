@@ -1,4 +1,5 @@
 import { BaseModel, SchemaDefinition } from "../helpers/BaseModel.js";
+import { ICartItem } from "./CartModel.js";
 
 export type OrderStatus =
   | "pending"
@@ -29,6 +30,8 @@ export interface IOrder {
 
   status: OrderStatus;
   notes: string | null;
+
+  order_items: ICartItem[];
 
   created_at: string | null;
   updated_at: string | null;
@@ -94,6 +97,11 @@ class OrderModelClass extends BaseModel<IOrder> {
     },
 
     notes: { type: "TEXT" },
+    order_items: {
+      type: "JSONB",
+      notNull: true,
+      default: "'[]'::jsonb",
+    },
 
     created_at: { type: "TIMESTAMPTZ", default: "NOW()" },
     updated_at: { type: "TIMESTAMPTZ", default: "NOW()" },

@@ -97,23 +97,18 @@ app.use(errorHandlerMiddleWare);
 // ───────────────────────────────────────────────
 const port = process.env.PORT || 5300;
 
-const startServer = async () => {
-  try {
-    console.log("🔄 Syncing database models...");
-    await syncAllModels();
-    console.log("✅ All models synced successfully");
+try {
+  console.log("🔄 Syncing database models...");
+  // await syncAllModels();
+  console.log("✅ All models synced successfully");
 
-    app.listen(port, () => {
-      const url = `http://localhost:${port}`;
-      console.log(`🚀 Server listening on port ${port}`);
-      console.log(`👉 Press Ctrl + Click to open: ${url}`);
-      console.log(`📘 API Docs available at: ${url}/api-docs`);
-    });
-  } catch (error) {
-    console.error("❌ Failed to start server:", error);
-    process.exit(1);
-  }
-};
-
-// ✅ Initialize server
-startServer();
+  app.listen(port, () => {
+    const url = `http://localhost:${port}`;
+    console.log(`🚀 Server listening on port ${port}`);
+    console.log(`👉 Press Ctrl + Click to open: ${url}`);
+    console.log(`📘 API Docs available at: ${url}/api-docs`);
+  });
+} catch (error) {
+  console.error("❌ Failed to start server:", error);
+  process.exit(1);
+}

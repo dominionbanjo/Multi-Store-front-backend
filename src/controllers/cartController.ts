@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
-import Cart from "../services/cartService.js";
+import CartService from "../services/cartService.js";
 import {
   BadRequestError,
   UnauthenticatedError,
@@ -14,85 +14,166 @@ interface CustomRequest extends Request {
   };
 }
 
-/** 🧾 GET: /api/v1/cart */
+/**
+ * 🧾 GET: /api/v1/cart
+ * Get full cart for logged-in user
+ */
 export const getCart = async (req: CustomRequest, res: Response) => {
   if (!req.user)
     throw new UnauthenticatedError("Please login to access your cart");
 
-  const cartItems = await Cart.getUserCart(req.user.userId);
+  const cart = await CartService.getUserCart(req.user.userId);
 
   res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
     message: "Cart retrieved successfully",
-    cartItems,
+    cart,
   });
 };
 
-/** ➕ POST: /api/v1/cart */
+/**
+ * ➕ POST: /api/v1/cart
+ * Add one or multiple items to cart
+ */
 export const addToCart = async (req: CustomRequest, res: Response) => {
-  if (!req.user) throw new UnauthenticatedError("Please login to add to cart");
+  if (!req.user)
+    throw new UnauthenticatedError("Please login to add items to cart");
 
   const items = req.body;
-  if (!Array.isArray(items) || items.length === 0)
-    throw new BadRequestError("Invalid cart data");
 
-  const cartItems = await Cart.addItems(req.user.userId, items);
+  if (!Array.isArray(items) || items.length === 0)
+    throw new BadRequestError("Items must be a non-empty array");
+
+  const cart = await CartService.addItems(req.user.userId, items);
 
   res.status(StatusCodes.CREATED).json({
     status: 1,
     success: true,
     message: "Items added to cart",
-    cartItems,
+    cart,
   });
 };
 
-/** 🔄 PATCH: /api/v1/cart/:id */
-export const updateCartItem = async (req: CustomRequest, res: Response) => {
-  if (!req.user)
-    throw new UnauthenticatedError("Please login to update your cart");
+/**
+ * 🔼 PATCH: /api/v1/cart/increment
+ */
+export const incrementCartItem = async (req: CustomRequest, res: Response) => {
+  if (!req.user) throw new UnauthenticatedError("Please login to modify cart");
 
-  const { id } = req.params;
-  const { quantity } = req.body;
-  if (!quantity || isNaN(quantity))
-    throw new BadRequestError("Quantity is required and must be a number");
+  const { product_id, color, size, step = 1 } = req.body;
 
-  const updatedItem = await Cart.updateItem(req.user.userId, id, quantity);
+  if (!product_id) throw new BadRequestError("product_id is required");
+
+  const cart = await CartService.incrementItem(
+    req.user.userId,
+    product_id,
+    color ?? null,
+    size ?? null,
+    Number(step)
+  );
 
   res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
-    message: "Cart item updated successfully",
-    item: updatedItem,
+    message: "Cart item incremented",
+    cart,
   });
 };
 
-/** ❌ DELETE: /api/v1/cart/:id */
+/**
+ * 🔽 PATCH: /api/v1/cart/decrement
+ */
+export const decrementCartItem = async (req: CustomRequest, res: Response) => {
+  if (!req.user) throw new UnauthenticatedError("Please login to modify cart");
+
+  const { product_id, color, size, step = 1 } = req.body;
+
+  if (!product_id) throw new BadRequestError("product_id is required");
+
+  const cart = await CartService.decrementItem(
+    req.user.userId,
+    product_id,
+    color ?? null,
+    size ?? null,
+    Number(step)
+  );
+
+  res.status(StatusCodes.OK).json({
+    status: 1,
+    success: true,
+    message: "Cart item decremented",
+    cart,
+  });
+};
+
+/**
+ * 🔄 PATCH: /api/v1/cart/update
+ * { product_id, color, size, quantity }
+ */
+export const updateCartItem = async (req: CustomRequest, res: Response) => {
+  if (!req.user) throw new UnauthenticatedError("Please login to update cart");
+
+  const { product_id, quantity, color, size } = req.body;
+
+  if (!product_id) throw new BadRequestError("product_id is required");
+  if (!quantity || isNaN(quantity))
+    throw new BadRequestError("Valid quantity is required");
+
+  const cart = await CartService.updateItem(
+    req.user.userId,
+    product_id,
+    color ?? null,
+    size ?? null,
+    Number(quantity)
+  );
+
+  res.status(StatusCodes.OK).json({
+    status: 1,
+    success: true,
+    message: "Cart item updated",
+    cart,
+  });
+};
+
+/**
+ * ❌ DELETE: /api/v1/cart/item
+ * { product_id, color, size }
+ */
 export const removeCartItem = async (req: CustomRequest, res: Response) => {
   if (!req.user) throw new UnauthenticatedError("Please login to remove items");
 
-  const { id } = req.params;
-  if (!id) throw new BadRequestError("Item ID is required");
+  const { product_id, color, size } = req.body;
 
-  const result = await Cart.removeItem(req.user.userId, id);
+  if (!product_id) throw new BadRequestError("product_id is required");
+
+  const cart = await CartService.removeItem(
+    req.user.userId,
+    product_id,
+    color ?? null,
+    size ?? null
+  );
 
   res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
-    message: result.message,
+    message: "Item removed from cart",
+    cart,
   });
 };
 
-/** 🧹 DELETE: /api/v1/cart */
+/**
+ * 🧹 DELETE: /api/v1/cart
+ */
 export const clearCart = async (req: CustomRequest, res: Response) => {
-  if (!req.user)
-    throw new UnauthenticatedError("Please login to clear your cart");
+  if (!req.user) throw new UnauthenticatedError("Please login to clear cart");
 
-  const result = await Cart.clearCart(req.user.userId);
+  const cart = await CartService.clearCart(req.user.userId);
 
   res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
-    message: result.message,
+    message: "Cart cleared",
+    cart,
   });
 };
