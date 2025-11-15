@@ -3,15 +3,47 @@ import { BadRequestError, NotFoundError } from "../utils/errors/customError.js";
 import { v4 as uuidv4 } from "uuid";
 
 class CartService {
+  // Normalize NULL, undefined, and trim strings
+  private static normalize(val: any) {
+    if (val === undefined || val === null) return null;
+    if (typeof val === "string") return val.trim().toLowerCase();
+    return val;
+  }
+
+  // Create unique signature for item
+  private static signature(item: ICartItem) {
+    return [
+      item.product_id,
+      this.normalize(item.color),
+      this.normalize(item.size),
+    ].join("|");
+  }
+
+  // Remove duplicates: merge quantities of identical items
+  private static mergeDuplicateItems(items: ICartItem[]) {
+    const map = new Map<string, ICartItem>();
+
+    for (const item of items) {
+      const key = this.signature(item);
+
+      if (!map.has(key)) {
+        map.set(key, { ...item });
+      } else {
+        const existing = map.get(key)!;
+        existing.quantity += item.quantity;
+      }
+    }
+
+    return Array.from(map.values());
+  }
+
   // ───────────────────────────────────────────────
-  // 🧾 Get or create cart for user
+  // Get or create user cart
   // ───────────────────────────────────────────────
   private static async getOrCreateCart(userId: string): Promise<ICart> {
     const cart = await CartModel.findOne({ user_id: userId });
-
     if (cart) return cart;
 
-    // Create new empty cart
     return await CartModel.create({
       id: uuidv4(),
       user_id: userId,
@@ -22,157 +54,50 @@ class CartService {
   }
 
   // ───────────────────────────────────────────────
-  // 📦 Get full user cart
+  // Get cart
   // ───────────────────────────────────────────────
   static async getUserCart(userId: string) {
     if (!userId) throw new BadRequestError("User ID is required");
-
     return await this.getOrCreateCart(userId);
   }
 
   // ───────────────────────────────────────────────
-  // ➕ Add / merge items
+  // Add items — NO duplicates allowed
   // ───────────────────────────────────────────────
   static async addItems(userId: string, items: ICartItem[]) {
     if (!userId) throw new BadRequestError("User ID is required");
-    if (!items || items.length === 0)
+    if (!Array.isArray(items) || items.length === 0)
       throw new BadRequestError("Cart items are required");
 
     const cart = await this.getOrCreateCart(userId);
 
-    const cartItems = [...cart.cart_items];
-
-    for (const item of items) {
-      const existing = cartItems.find(
-        (c) =>
-          c.product_id === item.product_id &&
-          c.color === item.color &&
-          c.size === item.size
-      );
-
-      if (existing) {
-        existing.quantity += item.quantity;
-      } else {
-        cartItems.push(item);
-      }
-    }
+    const updated = this.mergeDuplicateItems([...cart.cart_items, ...items]);
 
     return await CartModel.update(cart.id, {
-      cart_items: cartItems,
+      cart_items: updated,
       updated_at: new Date().toISOString(),
     });
   }
 
   // ───────────────────────────────────────────────
-  // 🔼 Increment quantity
+  // Replace entire cart (no duplicates)
   // ───────────────────────────────────────────────
-  static async incrementItem(
-    userId: string,
-    productId: string,
-    color: string | null,
-    size: string | null,
-    step = 1
-  ) {
-    const cart = await this.getOrCreateCart(userId);
+  static async setCartItems(userId: string, items: ICartItem[]) {
+    if (!Array.isArray(items))
+      throw new BadRequestError("items must be an array");
 
-    const item = cart.cart_items.find(
-      (c) => c.product_id === productId && c.color === color && c.size === size
-    );
-
-    if (!item) throw new NotFoundError("Item not found in cart");
-
-    item.quantity += step;
-
-    return await CartModel.update(cart.id, {
-      cart_items: cart.cart_items,
-      updated_at: new Date().toISOString(),
-    });
-  }
-
-  // ───────────────────────────────────────────────
-  // 🔽 Decrement quantity
-  // ───────────────────────────────────────────────
-  static async decrementItem(
-    userId: string,
-    productId: string,
-    color: string | null,
-    size: string | null,
-    step = 1
-  ) {
-    const cart = await this.getOrCreateCart(userId);
-
-    const itemIndex = cart.cart_items.findIndex(
-      (c) => c.product_id === productId && c.color === color && c.size === size
-    );
-
-    if (itemIndex === -1) throw new NotFoundError("Item not found in cart");
-
-    const item = cart.cart_items[itemIndex];
-
-    item.quantity -= step;
-
-    if (item.quantity <= 0) {
-      cart.cart_items.splice(itemIndex, 1);
-    }
-
-    return await CartModel.update(cart.id, {
-      cart_items: cart.cart_items,
-      updated_at: new Date().toISOString(),
-    });
-  }
-
-  // ───────────────────────────────────────────────
-  // 🔄 Update specific item quantity
-  // ───────────────────────────────────────────────
-  static async updateItem(
-    userId: string,
-    productId: string,
-    color: string | null,
-    size: string | null,
-    quantity: number
-  ) {
-    if (quantity < 1) throw new BadRequestError("Quantity must be at least 1");
+    const cleaned = this.mergeDuplicateItems(items);
 
     const cart = await this.getOrCreateCart(userId);
 
-    const item = cart.cart_items.find(
-      (c) => c.product_id === productId && c.color === color && c.size === size
-    );
-
-    if (!item) throw new NotFoundError("Cart item not found");
-
-    item.quantity = quantity;
-
     return await CartModel.update(cart.id, {
-      cart_items: cart.cart_items,
+      cart_items: cleaned,
       updated_at: new Date().toISOString(),
     });
   }
 
   // ───────────────────────────────────────────────
-  // ❌ Remove item completely
-  // ───────────────────────────────────────────────
-  static async removeItem(
-    userId: string,
-    productId: string,
-    color: string | null,
-    size: string | null
-  ) {
-    const cart = await this.getOrCreateCart(userId);
-
-    const newItems = cart.cart_items.filter(
-      (c) =>
-        !(c.product_id === productId && c.color === color && c.size === size)
-    );
-
-    return await CartModel.update(cart.id, {
-      cart_items: newItems,
-      updated_at: new Date().toISOString(),
-    });
-  }
-
-  // ───────────────────────────────────────────────
-  // 🧹 Clear entire cart
+  // Clear cart
   // ───────────────────────────────────────────────
   static async clearCart(userId: string) {
     const cart = await this.getOrCreateCart(userId);
@@ -184,7 +109,7 @@ class CartService {
   }
 
   // ───────────────────────────────────────────────
-  // 📊 Summary
+  // Summary
   // ───────────────────────────────────────────────
   static async getSummary(userId: string) {
     const cart = await this.getOrCreateCart(userId);

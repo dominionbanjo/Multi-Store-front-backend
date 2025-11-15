@@ -10,8 +10,6 @@ export interface ICartItem {
   quantity: number;
   size: string | null;
   color: string | null;
-  colors: string | null;
-  sizes: string | null;
   shipping_cost: number | null;
 }
 

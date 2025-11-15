@@ -24,6 +24,7 @@ export interface IOrder {
   tax: number | null;
   total: number;
 
+  payment_method: "online" | "offline";
   payment_reference: string | null;
   payment_url: string | null;
   payment_status: string | null;
@@ -85,7 +86,13 @@ class OrderModelClass extends BaseModel<IOrder> {
     tax: { type: "NUMERIC(10,2)" },
     total: { type: "NUMERIC(10,2)", notNull: true },
 
-    payment_reference: { type: "VARCHAR(255)" },
+    payment_method: {
+      type: "VARCHAR(50) CHECK (payment_method IN ('online','offline'))",
+      notNull: true,
+      default: "'offline'",
+    },
+
+    payment_reference: { type: "VARCHAR(255)", index: true },
     payment_url: { type: "TEXT" },
     payment_status: { type: "VARCHAR(50)" },
 
