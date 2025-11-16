@@ -69,7 +69,9 @@ class Accounts {
       agree_to_terms = true,
     } = data;
 
-    // ✅ Basic validation
+    // ───────────────────────────────────────────────
+    // 1) BASIC VALIDATION
+    // ───────────────────────────────────────────────
     if (!first_name || !last_name || !email || !password)
       throw new BadRequestError("All required fields must be filled");
 
@@ -82,10 +84,21 @@ class Accounts {
     if (!ALLOWED_ACCOUNT_TYPES.has(account_type as any))
       throw new BadRequestError("Invalid account type");
 
+    // 🛑 Vendor required fields must be validated BEFORE user creation
+    if (account_type === "vendor") {
+      if (!store_name || !username) {
+        throw new BadRequestError(
+          "Vendors must provide both store_name and username"
+        );
+      }
+    }
+
     const existing = await this.userExist(email);
     if (existing) throw new BadRequestError("User already exists");
 
-    // ✅ Normalize and validate current_sales_channel
+    // ───────────────────────────────────────────────
+    // 2) Normalize & Validate sales channel
+    // ───────────────────────────────────────────────
     let salesChannel: SalesChannel | null = null;
     if (current_sales_channel) {
       const normalized = current_sales_channel.trim().toLowerCase();
@@ -95,17 +108,18 @@ class Accounts {
       salesChannel = normalized as SalesChannel;
     }
 
-    // ✅ Create user (with nullable store_id)
-    const id = uuidv4();
+    // ───────────────────────────────────────────────
+    // 3) CREATE USER
+    // ───────────────────────────────────────────────
+    const userId = uuidv4();
     const hash = await hashPassword(password);
     const otp = crypto.randomInt(100000, 999999).toString();
     const otp_expiration = toUTCDate(10, true) as string;
 
-    const createdAt = new Date().toISOString();
-    const updatedAt = createdAt;
+    const now = new Date().toISOString();
 
     const userPayload: Partial<IUser> = {
-      id,
+      id: userId,
       first_name,
       last_name,
       phone_number: phone_number ?? null,
@@ -114,76 +128,83 @@ class Accounts {
       account_type: account_type as "user" | "vendor",
       store_id: null,
       store_name: null,
-      username: username ?? null,
-      referral_code: referral_code ?? null,
+      username: username ?? undefined, // FIX: must be undefined not null
+      referral_code: referral_code ?? undefined,
       current_sales_channel: salesChannel,
       agree_to_terms: agree_to_terms ?? true,
       email_verified: false,
       otp,
       otp_expiration,
       signup_medium: "signed",
-      created_at: createdAt,
-      updated_at: updatedAt,
+      created_at: now,
+      updated_at: now,
     };
 
     const user = await UserModel.create(userPayload);
 
     // ───────────────────────────────────────────────
-    // 🏬 If vendor — create store and link it
+    // 4) VENDOR FLOW — CREATE STORE (IDEMPOTENT)
     // ───────────────────────────────────────────────
     if (account_type === "vendor") {
-      if (!store_name || !username) {
-        await UserModel.delete(user.id);
-        throw new BadRequestError(
-          "Vendors must provide store_name and username during signup"
-        );
-      }
-
       try {
-        const storeId = uuidv4();
-        const storePayload: Partial<IStore> = {
-          id: storeId,
-          user_id: user.id,
-          store_name,
-          description: null,
-          logo: null,
-          cover_image: null,
-          rating_average: 0,
-          rating_count: 0,
-          category_ids: null,
-          created_at: createdAt,
-          updated_at: updatedAt,
-        };
+        const prevStore = await StoreModel.findOne({ user_id: user.id });
 
-        const store = await StoreModel.create(storePayload);
+        if (!prevStore) {
+          const storeId = uuidv4();
 
-        await UserModel.update(user.id, {
-          store_id: store.id,
-          store_name: store.store_name,
-          updated_at: new Date().toISOString(),
-        });
-      } catch (err) {
-        try {
-          await UserModel.delete(user.id);
-        } catch {
-          console.error("Failed to cleanup user after store creation error");
+          const store = await StoreModel.create({
+            id: storeId,
+            user_id: user.id,
+            store_name: store_name ?? undefined, // FIX: avoid null
+            description: null,
+            logo: null,
+            cover_image: null,
+            rating_average: 0,
+            rating_count: 0,
+            category_ids: null,
+            created_at: now,
+            updated_at: now,
+          });
+
+          await UserModel.update(user.id, {
+            store_id: store.id,
+            store_name: store.store_name,
+            updated_at: new Date().toISOString(),
+          });
+        } else {
+          // retry-safe
+          await UserModel.update(user.id, {
+            store_id: prevStore.id,
+            store_name: prevStore.store_name,
+            updated_at: new Date().toISOString(),
+          });
         }
+      } catch (err) {
+        await UserModel.delete(user.id);
         throw err;
       }
     }
 
-    // ✉️ Send verification email
+    // ───────────────────────────────────────────────
+    // 5) SEND VERIFICATION EMAIL
+    // ───────────────────────────────────────────────
     await sendEmailVerification({ name: first_name, email, otp });
 
-    // Return safe public info
+    // ───────────────────────────────────────────────
+    // 6) RETURN SAFE RESPONSE
+    // ───────────────────────────────────────────────
     return {
-      id,
+      id: userId,
       first_name,
       last_name,
       email,
+      phone_number: phone_number ?? null,
       account_type,
+      username: username ?? null,
+      store_name: account_type === "vendor" ? store_name : null,
       email_verified: false,
       signup_medium: "signed",
+      created_at: now,
     };
   }
 

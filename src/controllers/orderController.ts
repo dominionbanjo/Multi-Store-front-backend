@@ -16,33 +16,20 @@ interface CustomRequest extends Request {
   };
 }
 
-/** ➕ POST /api/v1/orders
- *  Create an OFFLINE order. This endpoint expects payment_method === "offline"
- */
+/* -------------------------------------------------------------------------- */
+/*                        1. CREATE OFFLINE ORDER                              */
+/* -------------------------------------------------------------------------- */
 export const createOrder = async (req: CustomRequest, res: Response) => {
   if (!req.user)
     throw new UnauthenticatedError("Please login to place an order");
 
-  const {
-    vendor_id,
-    store_id,
-    subtotal,
-    shipping_fee = 0,
-    tax = null,
-    total,
-    notes = null,
-    order_items,
-    payment_method,
-  } = req.body;
+  const { vendor_id, store_id, tax, notes, order_items, payment_method } =
+    req.body;
 
-  if (!vendor_id || subtotal === undefined || total === undefined)
-    throw new BadRequestError("Missing required fields");
+  if (!vendor_id) throw new BadRequestError("vendor_id is required");
 
-  // Explicit payment_method required and must be 'offline' for this route
   if (payment_method !== "offline")
-    throw new BadRequestError(
-      "This endpoint only creates offline orders (payment_method = 'offline')"
-    );
+    throw new BadRequestError("This endpoint only supports offline orders");
 
   if (!Array.isArray(order_items) || order_items.length === 0)
     throw new BadRequestError("order_items must be a non-empty array");
@@ -51,10 +38,7 @@ export const createOrder = async (req: CustomRequest, res: Response) => {
     buyer_id: req.user.userId,
     vendor_id,
     store_id,
-    subtotal: Number(subtotal),
-    shipping_fee: Number(shipping_fee),
-    tax: tax === null ? null : Number(tax),
-    total: Number(total),
+    tax: typeof tax === "number" ? tax : undefined,
     notes,
     order_items: order_items as ICartItem[],
     payment_method: "offline",
@@ -68,9 +52,9 @@ export const createOrder = async (req: CustomRequest, res: Response) => {
   });
 };
 
-/** 🧾 POST /api/v1/orders/:id/mark-paid-offline
- *  Mark an offline order as paid (vendor/admin). Route should be protected with authorizePermissions.
- */
+/* -------------------------------------------------------------------------- */
+/*                     2. MARK OFFLINE ORDER PAID                              */
+/* -------------------------------------------------------------------------- */
 export const markOrderPaidOfflineController = async (
   req: CustomRequest,
   res: Response
@@ -90,27 +74,19 @@ export const markOrderPaidOfflineController = async (
   });
 };
 
-/** 🧾 POST /api/v1/orders/paystack/initialize
- *  Create order + initialize Paystack payment (online)
- */
+/* -------------------------------------------------------------------------- */
+/*            3. CREATE ORDER + INITIALIZE PAYSTACK PAYMENT (ONLINE)          */
+/* -------------------------------------------------------------------------- */
 export const createPaystackOrder = async (
   req: CustomRequest,
   res: Response
 ) => {
   if (!req.user) throw new UnauthenticatedError("Login required");
 
-  const {
-    vendor_id,
-    store_id,
-    subtotal,
-    shipping_fee = 0,
-    total,
-    email,
-    order_items,
-  } = req.body;
+  const { vendor_id, store_id, email, order_items } = req.body;
 
-  if (!vendor_id || subtotal === undefined || total === undefined || !email)
-    throw new BadRequestError("Missing required fields");
+  if (!vendor_id) throw new BadRequestError("vendor_id is required");
+  if (!email) throw new BadRequestError("email is required");
 
   if (!Array.isArray(order_items) || order_items.length === 0)
     throw new BadRequestError("order_items must be a non-empty array");
@@ -119,9 +95,6 @@ export const createPaystackOrder = async (
     buyer_id: req.user.userId,
     vendor_id,
     store_id,
-    subtotal: Number(subtotal),
-    shipping_fee: Number(shipping_fee),
-    total: Number(total),
     email,
     order_items: order_items as ICartItem[],
   });
@@ -135,20 +108,26 @@ export const createPaystackOrder = async (
   });
 };
 
-/** ✅ GET /api/v1/orders/paystack/verify?reference=<ref> */
+/* -------------------------------------------------------------------------- */
+/*                        4. VERIFY PAYSTACK PAYMENT                           */
+/* -------------------------------------------------------------------------- */
 export const verifyPaystackOrder = async (
   req: CustomRequest,
   res: Response
 ) => {
   const { reference } = req.query;
+
   if (!reference || typeof reference !== "string")
     throw new BadRequestError("Reference required");
 
   const result = await OrderService.verifyPayment(reference);
+
   res.status(StatusCodes.OK).json(result);
 };
 
-/** 📄 GET /api/v1/orders/:id */
+/* -------------------------------------------------------------------------- */
+/*                             5. GET ONE ORDER                                */
+/* -------------------------------------------------------------------------- */
 export const getOrder = async (req: CustomRequest, res: Response) => {
   const { id } = req.params;
   if (!id) throw new BadRequestError("Order id required");
@@ -163,9 +142,9 @@ export const getOrder = async (req: CustomRequest, res: Response) => {
   });
 };
 
-/** 📜 GET /api/v1/orders
- *  Get orders for current user (buyer)
- */
+/* -------------------------------------------------------------------------- */
+/*                     6. GET ORDERS FOR CUSTOMER                             */
+/* -------------------------------------------------------------------------- */
 export const getUserOrders = async (req: CustomRequest, res: Response) => {
   if (!req.user)
     throw new UnauthenticatedError("Please login to view your orders");
@@ -180,15 +159,14 @@ export const getUserOrders = async (req: CustomRequest, res: Response) => {
   });
 };
 
-/** 📜 GET /api/v1/orders/vendor
- *  Get orders for vendor (current user). Route should be protected so only vendor/admin can call it.
- */
+/* -------------------------------------------------------------------------- */
+/*                   7. GET ALL ORDERS FOR A VENDOR                           */
+/* -------------------------------------------------------------------------- */
 export const getVendorOrders = async (req: CustomRequest, res: Response) => {
   if (!req.user)
     throw new UnauthenticatedError("Please login to view vendor orders");
 
-  const vendor_id = req.user.userId;
-  const orders = await OrderService.getOrdersByVendor(vendor_id);
+  const orders = await OrderService.getOrdersByVendor(req.user.userId);
 
   res.status(StatusCodes.OK).json({
     status: 1,
@@ -198,9 +176,9 @@ export const getVendorOrders = async (req: CustomRequest, res: Response) => {
   });
 };
 
-/** 🔄 PATCH /api/v1/orders/:id/status
- *  Update order status (admin/vendor only)
- */
+/* -------------------------------------------------------------------------- */
+/*                       8. UPDATE ORDER STATUS                                */
+/* -------------------------------------------------------------------------- */
 export const updateOrderStatus = async (req: CustomRequest, res: Response) => {
   const { id } = req.params;
   const { status } = req.body;
@@ -213,30 +191,34 @@ export const updateOrderStatus = async (req: CustomRequest, res: Response) => {
   res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
-    message: "Order status updated",
+    message: "Order status updated successfully",
     order: updated,
   });
 };
 
-/** ❌ DELETE /api/v1/orders/:id
- *  Cancel order
- */
+/* -------------------------------------------------------------------------- */
+/*                              9. CANCEL ORDER                                */
+/* -------------------------------------------------------------------------- */
 export const cancelOrder = async (req: CustomRequest, res: Response) => {
   const { id } = req.params;
-  if (!id) throw new BadRequestError("Order id required");
+  const requestedBy = req.user?.userId;
 
-  const result = await OrderService.cancelOrder(id);
+  if (!id) throw new BadRequestError("Order id required");
+  if (!requestedBy) throw new BadRequestError("Unauthorized request");
+
+  const result = await OrderService.cancelOrder(id, requestedBy);
 
   res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
+    idempotent: result.idempotent ?? false,
     message: result.message,
   });
 };
 
-/** 🏦 POST /api/v1/orders/paystack/verify-bank
- * Verify a bank account via Paystack (for frontend confirmation)
- */
+/* -------------------------------------------------------------------------- */
+/*                    10. VERIFY BANK ACCOUNT (PAYSTACK)                      */
+/* -------------------------------------------------------------------------- */
 export const verifyBankAccountController = async (
   req: Request,
   res: Response

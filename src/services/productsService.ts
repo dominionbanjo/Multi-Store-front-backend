@@ -171,6 +171,7 @@ class ProductService {
     data: Omit<IProduct, "id" | "created_at" | "updated_at">,
     files?: { image?: Express.Multer.File[]; gallery?: Express.Multer.File[] }
   ) {
+    data.category = data.category.trim();
     await this.validateCategory(data.category);
     await this.validateColors(data.colors);
 

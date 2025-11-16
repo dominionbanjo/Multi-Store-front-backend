@@ -11,7 +11,7 @@ export type DeliveryStatus =
 
 export interface IDelivery {
   id: string;
-  order_id: string | null;
+  order_id: string;
   courier_id: string | null;
   buyer_id: string;
   vendor_id: string;
@@ -45,6 +45,7 @@ class DeliveryModelClass extends BaseModel<IDelivery> {
       references: "orders(id)",
       onDelete: "SET NULL",
       onUpdate: "CASCADE",
+      notNull: true,
     },
 
     courier_id: {

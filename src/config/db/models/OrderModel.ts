@@ -11,6 +11,14 @@ export type OrderStatus =
   | "failed"
   | "canceled";
 
+export type PaymentStatus =
+  | "pending"
+  | "success"
+  | "failed"
+  | "canceled"
+  | "refunded"
+  | "unpaid";
+
 export interface IOrder {
   id: string;
   buyer_id: string;
@@ -27,7 +35,8 @@ export interface IOrder {
   payment_method: "online" | "offline";
   payment_reference: string | null;
   payment_url: string | null;
-  payment_status: string | null;
+  payment_access_code: string | null;
+  payment_status: PaymentStatus | null;
 
   status: OrderStatus;
   notes: string | null;
@@ -94,8 +103,12 @@ class OrderModelClass extends BaseModel<IOrder> {
 
     payment_reference: { type: "VARCHAR(255)", index: true },
     payment_url: { type: "TEXT" },
-    payment_status: { type: "VARCHAR(50)" },
+    payment_access_code: { type: "VARCHAR(255)" },
 
+    payment_status: {
+      type: "VARCHAR(50) CHECK (payment_status IN ('paid','unpaid'))",
+      default: "'unpaid'",
+    },
     status: {
       type: "VARCHAR(50)",
       notNull: true,

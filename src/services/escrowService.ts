@@ -10,13 +10,14 @@ import { UserModel } from "../config/db/models/UserModel.js";
 import { TransactionModel } from "../config/db/models/TransactionModel.js";
 import { BadRequestError, NotFoundError } from "../utils/errors/customError.js";
 import { initiateTransfer } from "../utils/payment/paystack.js";
+import { EscrowMailService } from "../utils/mails/EscrowMailService.js";
+import PayoutService from "./payoutService.js";
 
 /**
- * 💰 Escrow Service
- * Handles escrow creation, funding, holding, release (via Paystack), and refunds.
+ * 💰 Escrow Service (Idempotent-safe)
  */
 export class EscrowService {
-  /** ➕ Create escrow record when order is created */
+  /** ➕ Create escrow record when order is created (idempotent) */
   static async createEscrow(data: {
     order_id: string;
     buyer_id: string;
@@ -26,16 +27,21 @@ export class EscrowService {
     if (!data.order_id || !data.buyer_id || !data.vendor_id)
       throw new BadRequestError("Missing escrow fields");
 
+    // 🛑 IDEMPOTENCY
+    const existing = await EscrowModel.findOne({ order_id: data.order_id });
+    if (existing) return existing;
+
+    const now = new Date().toISOString();
+
     const escrow = await EscrowModel.create({
       id: uuidv4(),
       ...data,
       release_code: this.generateCode(),
       status: "pending" as EscrowStatus,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: now,
+      updated_at: now,
     });
 
-    // Log transaction: escrow_hold
     await TransactionModel.create({
       id: uuidv4(),
       order_id: data.order_id,
@@ -48,9 +54,31 @@ export class EscrowService {
       description: `Escrow created for order ${data.order_id}`,
       status: "pending",
       metadata: null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: now,
+      updated_at: now,
     });
+
+    /** ─────────────────────── EMAILS ───────────────────────── */
+
+    const buyer = await UserModel.findById(data.buyer_id).catch(() => null);
+    const vendor = await UserModel.findById(data.vendor_id).catch(() => null);
+
+    if (buyer?.email) {
+      await EscrowMailService.sendEscrowCreatedBuyer({
+        email: buyer.email,
+        name: buyer.first_name,
+        order_id: data.order_id,
+      });
+    }
+
+    if (vendor?.email) {
+      await EscrowMailService.sendEscrowCreatedVendor({
+        email: vendor.email,
+        name: vendor.first_name ?? vendor.store_name ?? "Vendor",
+        order_id: data.order_id,
+        amount: data.amount,
+      });
+    }
 
     return escrow;
   }
@@ -62,22 +90,24 @@ export class EscrowService {
     return escrow;
   }
 
-  /** 🔢 Generate a 6-digit release code */
   private static generateCode(): string {
     return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
-  /** 💰 Mark escrow as funded after successful payment */
+  /** 💰 Mark escrow as funded (idempotent) */
   static async fundEscrow(id: string): Promise<IEscrow> {
     const escrow = await EscrowModel.findById(id);
     if (!escrow) throw new NotFoundError("Escrow not found");
 
+    if (escrow.status === "funded") return escrow;
+
+    const now = new Date().toISOString();
+
     const updated = await EscrowModel.update(id, {
       status: "funded" as EscrowStatus,
-      updated_at: new Date().toISOString(),
+      updated_at: now,
     });
 
-    // Log transaction: payment
     await TransactionModel.create({
       id: uuidv4(),
       order_id: escrow.order_id,
@@ -90,14 +120,35 @@ export class EscrowService {
       description: `Escrow funded for order ${escrow.order_id}`,
       status: "success",
       metadata: null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: now,
+      updated_at: now,
     });
+
+    /** ─────────────────────── EMAILS ───────────────────────── */
+
+    const buyer = await UserModel.findById(escrow.buyer_id).catch(() => null);
+    const vendor = await UserModel.findById(escrow.vendor_id).catch(() => null);
+
+    if (buyer?.email) {
+      await EscrowMailService.sendEscrowFundedBuyer({
+        email: buyer.email,
+        name: buyer.first_name,
+        order_id: escrow.order_id,
+      });
+    }
+
+    if (vendor?.email) {
+      await EscrowMailService.sendEscrowFundedVendor({
+        email: vendor.email,
+        name: vendor.first_name ?? vendor.store_name ?? "Vendor",
+        order_id: escrow.order_id,
+      });
+    }
 
     return updated;
   }
 
-  /** 📦 Mark escrow as delivered (start hold period before release) */
+  /** 📦 Mark escrow delivered (idempotent) */
   static async markDelivered(order_id: string): Promise<IEscrow> {
     const order = await OrderModel.findById(order_id);
     if (!order) throw new NotFoundError("Order not found");
@@ -105,13 +156,17 @@ export class EscrowService {
     const escrow = await EscrowModel.findById(order.escrow_id!);
     if (!escrow) throw new NotFoundError("Escrow not found");
 
+    if (escrow.status === "delivered") return escrow;
+
+    const now = new Date().toISOString();
+    const holdUntil = new Date(Date.now() + 3 * 86400000).toISOString();
+
     const updated = await EscrowModel.update(escrow.id, {
       status: "delivered" as EscrowStatus,
-      hold_until: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(), // 3-day hold
-      updated_at: new Date().toISOString(),
+      hold_until: holdUntil,
+      updated_at: now,
     });
 
-    // Log transaction: escrow_hold (delivered)
     await TransactionModel.create({
       id: uuidv4(),
       order_id: order.id,
@@ -124,117 +179,251 @@ export class EscrowService {
       description: `Order delivered, escrow hold started`,
       status: "success",
       metadata: null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: now,
+      updated_at: now,
     });
 
     return updated;
   }
 
-  /** 🔓 Release escrow funds via Paystack → Store account */
-  static async releaseEscrow(order_id: string, code: string) {
+  /** 🔓 Release escrow funds (idempotent) */
+  static async releaseEscrow(order_id: string, code: string, user_id: string) {
+    const now = new Date().toISOString();
+
+    /* ----------------------------- 1. Load Order ----------------------------- */
     const order = await OrderModel.findById(order_id);
     if (!order) throw new NotFoundError("Order not found");
 
-    const escrow = await EscrowModel.findById(order.escrow_id!);
+    /* ------------------------- 2. Load Escrow For Order ----------------------- */
+    if (!order.escrow_id)
+      throw new BadRequestError("Order has no escrow attached");
+
+    const escrow = await EscrowModel.findById(order.escrow_id);
     if (!escrow) throw new NotFoundError("Escrow not found");
 
+    /* ----------------------- 3. Authorization Check -------------------------- */
+    if (user_id !== order.buyer_id)
+      throw new BadRequestError("Only the buyer can release escrow");
+
+    /* ------------------------ 4. Validate Release Code ------------------------- */
     if (escrow.release_code !== code)
       throw new BadRequestError("Invalid release code");
 
+    /* ------------------------- 5. Idempotency Check --------------------------- */
+    if (escrow.status === "released") {
+      return {
+        success: true,
+        idempotent: true,
+        message: "Escrow already released",
+      };
+    }
+
+    /* ------------------------ 6. Escrow Must Be Delivered ---------------------- */
+    if (escrow.status !== "delivered") {
+      throw new BadRequestError("Escrow is not eligible for release");
+    }
+
+    /* --------------------------- 7. Fetch Store ------------------------------- */
     const store = await StoreModel.findById(order.store_id!);
-    if (!store) throw new NotFoundError("Store not found for vendor");
+    if (!store) throw new NotFoundError("Store not found");
 
     if (!store.recipient_code)
-      throw new BadRequestError("Store has no registered payout account");
+      throw new BadRequestError("Store does not have a payout account");
 
-    // 💸 Transfer funds via Paystack
+    /* --------------------------- 8. Initiate Transfer ------------------------- */
     const transfer = await initiateTransfer({
       recipient_code: store.recipient_code,
       amount: escrow.amount,
       reason: `Payout for order ${order.id}`,
     });
 
-    const now = new Date().toISOString();
+    if (!transfer) {
+      throw new BadRequestError("Failed to initiate payout transfer");
+    }
 
-    // 🔹 Update escrow + order
-    await EscrowModel.update(escrow.id, {
-      status: "released" as EscrowStatus,
-      released_at: now,
+    /* ----------------------- 9. Create Pending Payout Record ------------------ */
+    await PayoutService.createPendingPayout({
+      order_id: order.id,
+      escrow_id: escrow.id,
+      recipient_code: store.recipient_code,
+      amount: escrow.amount,
+      currency: "NGN",
+      transfer_data: transfer,
     });
 
-    await OrderModel.update(order_id, {
-      status: "completed" as OrderStatus,
+    /* --------------------------- 10. Update Escrow ---------------------------- */
+    await EscrowModel.update(escrow.id, {
+      status: "released",
+      released_at: now,
       updated_at: now,
     });
 
-    // 📊 Update store analytics + customers
+    /* --------------------------- 11. Update Order ----------------------------- */
+    await OrderModel.update(order.id, {
+      status: "completed",
+      updated_at: now,
+    });
+
+    /* ---------------------- 12. Update Store Stats & Customers ----------------- */
     await this.updateStoreStatsAndCustomers(
       store.id,
       order.buyer_id,
       escrow.amount
     );
 
-    // 🧾 Log transaction: payout
-    await TransactionModel.create({
-      id: uuidv4(),
-      order_id: order.id,
-      escrow_id: escrow.id,
-      vendor_id: order.vendor_id,
-      store_id: order.store_id,
-      type: "payout",
-      amount: escrow.amount,
-      currency: "NGN",
-      reference: transfer?.transfer_code || null,
-      description: `Funds released to store for order ${order.id}`,
-      status: "success",
-      metadata: transfer,
-      created_at: now,
-      updated_at: now,
-    });
+    /* ---------------------------- 13. Notification ----------------------------- */
+    const vendor = await UserModel.findById(order.vendor_id).catch(() => null);
 
-    return { success: true, message: "Funds transferred and store updated" };
-  }
-
-  /** 💸 Refund escrow when order is canceled */
-  static async refundEscrow(id: string) {
-    const escrow = await EscrowModel.findById(id);
-    if (!escrow) throw new NotFoundError("Escrow not found");
-
-    await EscrowModel.update(id, {
-      status: "refunded" as EscrowStatus,
-      refunded_at: new Date().toISOString(),
-    });
-
-    if (escrow.order_id) {
-      await OrderModel.update(escrow.order_id, {
-        status: "failed" as OrderStatus,
-        updated_at: new Date().toISOString(),
+    if (vendor?.email) {
+      await EscrowMailService.sendEscrowReleasedVendor({
+        email: vendor.email,
+        name: vendor.first_name ?? vendor.store_name ?? "Vendor",
+        order_id,
+        amount: escrow.amount,
       });
     }
 
-    // 🧾 Log transaction: refund
+    return {
+      success: true,
+      idempotent: false,
+      message: "Escrow released and payout initiated",
+      payout_transfer_code: transfer.transfer_code,
+    };
+  }
+
+  /** 💸 Refund escrow to the buyer (secure, idempotent, payout-enabled) */
+  static async refundEscrow(
+    escrow_id: string,
+    requestedBy: string // user_id (buyer or admin)
+  ) {
+    const now = new Date().toISOString();
+
+    /* ----------------------------- 1. Load Escrow ----------------------------- */
+    const escrow = await EscrowModel.findById(escrow_id);
+    if (!escrow) throw new NotFoundError("Escrow not found");
+
+    /* ------------------------- 2. Load Order For Escrow ----------------------- */
+    const order = escrow.order_id
+      ? await OrderModel.findById(escrow.order_id)
+      : null;
+
+    if (!order)
+      throw new NotFoundError("Order associated with escrow not found");
+
+    /* -------------------------- 3. Validate Order Status ---------------------- */
+    if (order.status !== "canceled") {
+      throw new BadRequestError(
+        "Order must be canceled before escrow can be refunded"
+      );
+    }
+
+    /* --------------------------- 4. Authorization Check ------------------------ */
+    if (requestedBy !== escrow.buyer_id) {
+      const requester = await UserModel.findById(requestedBy).catch(() => null);
+      if (!requester || requester.account_type !== "admin") {
+        throw new BadRequestError("Unauthorized refund request");
+      }
+    }
+
+    /* ----------------------------- 5. Idempotency ----------------------------- */
+    if (escrow.status === "refunded") {
+      return {
+        success: true,
+        idempotent: true,
+        message: "Escrow already refunded",
+      };
+    }
+
+    /* ------------------------- 6. Escrow MUST BE FUNDED ----------------------- */
+    if (escrow.status !== "funded") {
+      throw new BadRequestError(
+        `Escrow cannot be refunded unless status is 'funded' (current: ${escrow.status})`
+      );
+    }
+
+    /* -------------------------- 7. Fetch Buyer Details ------------------------ */
+    const buyer = await UserModel.findById(escrow.buyer_id);
+    if (!buyer) throw new NotFoundError("Buyer not found");
+
+    if (!buyer.recipient_code) {
+      throw new BadRequestError(
+        "Buyer has no registered bank account for refund"
+      );
+    }
+
+    /* --------------------- 8. Initiate Paystack Refund Transfer --------------- */
+    const transfer = await initiateTransfer({
+      recipient_code: buyer.recipient_code,
+      amount: escrow.amount,
+      reason: `Refund for order ${order.id}`,
+    });
+
+    if (!transfer) {
+      throw new BadRequestError("Failed to initiate refund payout");
+    }
+
+    /* --------------------------- 9. Create Pending Payout ---------------------- */
+    await PayoutService.createPendingPayout({
+      order_id: order.id,
+      escrow_id: escrow.id,
+      recipient_code: buyer.recipient_code,
+      amount: escrow.amount,
+      currency: "NGN",
+      transfer_data: transfer,
+    });
+
+    /* ------------------------------- 10. Update Escrow ------------------------ */
+    await EscrowModel.update(escrow.id, {
+      status: "refunded",
+      refunded_at: now,
+      updated_at: now,
+    });
+
+    /* ------------------------------- 11. Update Order ------------------------- */
+    await OrderModel.update(order.id, {
+      status: "failed",
+      payment_status: "refunded",
+      updated_at: now,
+    });
+
+    /* ---------------------------- 12. Log Transaction ------------------------- */
     await TransactionModel.create({
       id: uuidv4(),
-      order_id: escrow.order_id,
+      order_id: order.id,
       escrow_id: escrow.id,
       user_id: escrow.buyer_id,
       vendor_id: escrow.vendor_id,
       type: "refund",
       amount: escrow.amount,
       currency: "NGN",
-      description: `Refund issued for order ${escrow.order_id}`,
-      status: "success",
-      metadata: null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      reference: transfer.transfer_code ?? null,
+      description: "Refund initiated to buyer",
+      status: "pending",
+      metadata: transfer,
+      created_at: now,
+      updated_at: now,
     });
 
-    return { success: true, message: "Escrow refunded successfully" };
+    /* ------------------------------- 13. Email Buyer -------------------------- */
+    if (buyer.email) {
+      await EscrowMailService.sendEscrowRefundedBuyer({
+        email: buyer.email,
+        name: buyer.first_name ?? "Customer",
+        order_id: order.id,
+        amount: escrow.amount,
+      });
+    }
+
+    return {
+      success: true,
+      idempotent: false,
+      message: "Refund initiated — awaiting Paystack confirmation",
+      transfer_code: transfer.transfer_code,
+    };
   }
 
   // ───────────────────────────────────────────────
-  // 📈 Update store analytics + customers
+  // 📈 Update store analytics
   // ───────────────────────────────────────────────
   private static async updateStoreStatsAndCustomers(
     store_id: string,
@@ -260,21 +449,18 @@ export class EscrowService {
       customers: [],
     };
 
-    // 💰 Sales
     const sale = analytics.sales.find(
       (s) => s.month === month && s.year === year
     );
     if (sale) sale.amount += amount;
     else analytics.sales.push({ month, year, amount });
 
-    // 🧾 Orders
     const orderRec = analytics.orders.find(
       (o) => o.month === month && o.year === year
     );
     if (orderRec) orderRec.count += 1;
     else analytics.orders.push({ month, year, count: 1 });
 
-    // ── Update customers JSON array
     const customers = (store.customers || []) as IStoreCustomer[];
     const spent = Number(amount);
     const last_order_date = now.toISOString();

@@ -11,7 +11,8 @@ export type TransactionType =
   | "payment_offline"
   | "payment_init"
   | "payment_confirmed"
-  | "order_canceled";
+  | "order_canceled"
+  | "payment_webhook";
 
 export type TransactionStatus = "pending" | "success" | "failed" | "reversed";
 

@@ -28,6 +28,7 @@ import errorHandlerMiddleWare from "./middlewares/errorHandlerMiddleWare.js";
 
 // ✅ Import DB sync utility
 import { syncAllModels } from "./utils/db/sync.js";
+import paystackWebhookRoute from "./routes/paystackWebhookRoute.js";
 
 // CLOUDINARY CONFIG
 cloudinary.v2.config({
@@ -52,6 +53,8 @@ app.use(configureRateLimit());
 // ───────────────────────────────────────────────
 // 🧰 CORE MIDDLEWARE
 // ───────────────────────────────────────────────
+app.use("/webhook/paystack", express.raw({ type: "application/json" }));
+
 app.use(express.json());
 app.use(morgan("dev"));
 
@@ -67,6 +70,7 @@ app.use("/api/v1/review", reviewRouter);
 app.use("/api/v1/store", storeRouter);
 app.use("/api/v1/wishlist", wishlistRouter);
 app.use("/api/v1/product-categories", productCategoryRouter);
+app.use("/webhook/paystack", paystackWebhookRoute);
 
 // ───────────────────────────────────────────────
 // 📘 STATIC API DOCS (Generated index.html)
@@ -99,7 +103,7 @@ const port = process.env.PORT || 5300;
 
 try {
   console.log("🔄 Syncing database models...");
-  // await syncAllModels();
+  await syncAllModels();
   console.log("✅ All models synced successfully");
 
   app.listen(port, () => {
