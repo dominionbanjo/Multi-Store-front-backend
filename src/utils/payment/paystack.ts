@@ -49,6 +49,7 @@ export const initializePaystackPayment = async (
         email,
         amount: Math.round(amount * 100),
         currency: "NGN",
+        callback_url: `${process.env.BASE_URL}/verify`,
       },
       { headers }
     );

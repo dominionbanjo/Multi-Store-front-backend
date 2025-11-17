@@ -242,6 +242,12 @@ class ProductService {
 
     await this.refreshSearchVector(product.id);
 
+    await StoreModel.update(data.store_id, {
+      total_products: Number(store.total_products || 0) + 1,
+      products_listed: Number(store.products_listed || 0) + 1,
+      updated_at: new Date().toISOString(),
+    });
+
     return product;
   }
 

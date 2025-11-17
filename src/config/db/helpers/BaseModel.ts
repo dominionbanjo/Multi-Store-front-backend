@@ -277,7 +277,7 @@ export abstract class BaseModel<T extends Record<string, any>> {
   // ───────────────────────────────────────────────
   async findAll(
     filters?: Partial<T>,
-    options?: { page?: number; limit?: number }
+    options?: { page?: number; limit?: number; orderBy?: string }
   ) {
     const page = options?.page ?? 1;
     const limit = options?.limit ?? 20;
@@ -292,10 +292,16 @@ export abstract class BaseModel<T extends Record<string, any>> {
       values.push(...Object.values(filters));
     }
 
+    // ⭐ Allow dynamic ordering, fallback to created_at DESC
+    const orderBy = options?.orderBy
+      ? `ORDER BY ${options.orderBy}`
+      : `ORDER BY created_at DESC`;
+
     const data = await sql.unsafe<T[]>(
-      `SELECT * FROM ${this.table} ${where}
-       ORDER BY created_at DESC
-       LIMIT ${limit} OFFSET ${offset};`,
+      `SELECT * FROM ${this.table}
+     ${where}
+     ${orderBy}
+     LIMIT ${limit} OFFSET ${offset};`,
       values
     );
 

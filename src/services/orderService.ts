@@ -21,6 +21,7 @@ import {
 } from "../config/db/models/index.js";
 import { OrderMailService } from "../utils/mails/OrderMailService.js";
 import { UserModel } from "../config/db/models/UserModel.js";
+import StoreService from "./storeService.js";
 
 export class OrderService {
   /* -------------------------------------------------------------------------- */
@@ -356,6 +357,13 @@ export class OrderService {
       payment_status: "paid" as PaymentStatus, // paid in person
       updated_at: now,
     });
+
+    await StoreService.updateStoreAnalytics(
+      updatedOrder.vendor_id,
+      updatedOrder.total,
+      updatedOrder.buyer_id,
+      updatedOrder.order_items
+    );
 
     // Transaction log (optional)
     await TransactionModel.create({
@@ -744,20 +752,21 @@ export class OrderService {
     const order = await OrderModel.findById(id);
     if (!order) throw new NotFoundError("Order not found");
 
-    // Ensure ONLY buyer or vendor is allowed
+    // Only buyer or vendor can cancel
     if (requestedBy !== order.buyer_id && requestedBy !== order.vendor_id) {
       throw new BadRequestError(
         "Only the buyer or vendor can cancel this order"
       );
     }
 
-    if (order.status === "delivered" || order.status === "completed") {
+    if (["delivered", "completed"].includes(order.status)) {
       throw new BadRequestError(
         "Delivered or completed orders cannot be canceled"
       );
     }
 
     if (order.status === "canceled") {
+      // Idempotent return
       return {
         success: true,
         idempotent: true,
@@ -767,12 +776,33 @@ export class OrderService {
 
     const now = new Date().toISOString();
 
+    /* -------------------------------------------------------
+     1. CANCEL THE ORDER
+  -------------------------------------------------------- */
     await OrderModel.update(id, {
       status: "canceled",
       updated_at: now,
     });
 
-    // Refund if online
+    /* -------------------------------------------------------
+     2. CANCEL DELIVERY IF EXISTS
+  -------------------------------------------------------- */
+    const delivery = await DeliveryModel.findOne({ order_id: order.id });
+
+    if (
+      delivery &&
+      delivery.delivery_status !== "failed" &&
+      delivery.delivery_status !== "returned"
+    ) {
+      await DeliveryModel.update(delivery.id, {
+        delivery_status: "failed", // or "returned" based on your model
+        updated_at: now,
+      });
+    }
+
+    /* -------------------------------------------------------
+     3. REFUND ESCROW IF ONLINE
+  -------------------------------------------------------- */
     if (order.escrow_id && order.payment_method === "online") {
       try {
         await EscrowService.refundEscrow(order.escrow_id, requestedBy);
@@ -781,7 +811,9 @@ export class OrderService {
       }
     }
 
-    // Log transaction
+    /* -------------------------------------------------------
+     4. LOG TRANSACTION
+  -------------------------------------------------------- */
     await TransactionModel.create({
       id: uuidv4(),
       order_id: order.id,
@@ -798,9 +830,9 @@ export class OrderService {
       updated_at: now,
     });
 
-    /* --------------------------------------------------------------------------
-     ✉️ SEND EMAILS TO BOTH BUYER & VENDOR
-  -------------------------------------------------------------------------- */
+    /* -------------------------------------------------------
+     5. EMAIL NOTIFICATIONS
+  -------------------------------------------------------- */
     try {
       const buyer = await UserModel.findById(order.buyer_id).catch(() => null);
       const vendor = await UserModel.findById(order.vendor_id).catch(

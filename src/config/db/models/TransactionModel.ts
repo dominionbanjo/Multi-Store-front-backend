@@ -1,19 +1,20 @@
 import { BaseModel, SchemaDefinition } from "../helpers/BaseModel.js";
 
 export type TransactionType =
-  | "payment" // buyer → platform
-  | "escrow_hold" // platform holds funds
-  | "payout" // platform → vendor
-  | "refund" // platform → buyer
-  | "fee" // commission
-  | "offline_payment" // NEW — vendor logs manual payment
-  | "order_created" // NEW — track offline order creation
+  | "payment"
+  | "escrow_hold"
+  | "payout"
+  | "refund"
+  | "fee"
+  | "offline_payment"
+  | "order_created"
   | "payment_offline"
   | "payment_init"
   | "payment_confirmed"
   | "order_canceled"
   | "payment_webhook"
   | "offline_fulfillment";
+
 export type TransactionStatus = "pending" | "success" | "failed" | "reversed";
 
 export interface ITransaction {
@@ -45,9 +46,10 @@ class TransactionModelClass extends BaseModel<ITransaction> {
     order_id: {
       type: "UUID",
       references: "orders(id)",
-      onDelete: "SET NULL",
+      onDelete: "SET NULL", // 🔥 Never remove transactions
       onUpdate: "CASCADE",
       index: true,
+      notNull: false, // Must be nullable since we SET NULL
     },
 
     escrow_id: {
@@ -56,6 +58,7 @@ class TransactionModelClass extends BaseModel<ITransaction> {
       onDelete: "SET NULL",
       onUpdate: "CASCADE",
       index: true,
+      notNull: false,
     },
 
     user_id: {
@@ -64,6 +67,7 @@ class TransactionModelClass extends BaseModel<ITransaction> {
       onDelete: "SET NULL",
       onUpdate: "CASCADE",
       index: true,
+      notNull: false,
     },
 
     vendor_id: {
@@ -72,15 +76,8 @@ class TransactionModelClass extends BaseModel<ITransaction> {
       onDelete: "SET NULL",
       onUpdate: "CASCADE",
       index: true,
+      notNull: false,
     },
-
-    // store_id: {
-    //   type: "UUID",
-    //   references: "stores(id)",
-    //   onDelete: "SET NULL",
-    //   onUpdate: "CASCADE",
-    //   index: true,
-    // },
 
     type: { type: "VARCHAR(50)", notNull: true, index: true },
 

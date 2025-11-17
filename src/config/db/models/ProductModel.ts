@@ -1,3 +1,4 @@
+import sql from "../../connect.js";
 import { BaseModel, SchemaDefinition } from "../helpers/BaseModel.js";
 
 export interface IProductImage {
@@ -42,6 +43,8 @@ export interface IProduct {
   rating_average: number | null;
   rating_count: number | null;
   review_count: number | null;
+
+  total_sold: number | null;
 
   created_at: string | null;
   updated_at: string | null;
@@ -101,11 +104,21 @@ class ProductModelClass extends BaseModel<IProduct> {
     rating_count: { type: "INT", default: "0" },
     review_count: { type: "INT", default: "0" },
 
+    total_sold: { type: "INT", default: "0", notNull: true },
+
     created_at: { type: "TIMESTAMPTZ", default: "NOW()" },
     updated_at: { type: "TIMESTAMPTZ", default: "NOW()" },
 
     search_vector: { type: "TSVECTOR" },
   };
+
+  async increment(field: string, id: string, amount: number) {
+    return sql`
+    UPDATE ${this.table}
+    SET ${sql(field)} = ${sql(field)} + ${amount}
+    WHERE id = ${id}
+  `;
+  }
 }
 
 export const ProductModel = new ProductModelClass();

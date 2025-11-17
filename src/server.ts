@@ -28,7 +28,7 @@ import deliveryRouter from "./routes/deliveryRoutes.js";
 import errorHandlerMiddleWare from "./middlewares/errorHandlerMiddleWare.js";
 
 // ✅ Import DB sync utility
-import { syncAllModels } from "./utils/db/sync.js";
+// import { syncAllModels } from "./utils/db/sync.js";
 import paystackWebhookRoute from "./routes/paystackWebhookRoute.js";
 
 // CLOUDINARY CONFIG

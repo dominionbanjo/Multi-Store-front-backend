@@ -16,6 +16,7 @@ import {
 
 import { UserModel, type IUser } from "../config/db/models/UserModel.js";
 import { StoreModel, type IStore } from "../config/db/models/StoreModel.js";
+import StoreService from "./storeService.js";
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -150,20 +151,16 @@ class Accounts {
         const prevStore = await StoreModel.findOne({ user_id: user.id });
 
         if (!prevStore) {
-          const storeId = uuidv4();
-
-          const store = await StoreModel.create({
-            id: storeId,
+          const store = await StoreService.createStore({
             user_id: user.id,
-            store_name: store_name ?? undefined, // FIX: avoid null
+            store_name: store_name!,
             description: null,
             logo: null,
             cover_image: null,
             rating_average: 0,
             rating_count: 0,
             category_ids: null,
-            created_at: now,
-            updated_at: now,
+            email,
           });
 
           await UserModel.update(user.id, {

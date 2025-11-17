@@ -1,6 +1,11 @@
 import { v4 as uuidv4 } from "uuid";
 import slugify from "slugify";
-import { StoreModel, IStore } from "../config/db/models/StoreModel.js";
+import {
+  StoreModel,
+  IStore,
+  IAnalytics,
+  IStoreCustomer,
+} from "../config/db/models/StoreModel.js";
 import { ProductModel } from "../config/db/models/ProductModel.js";
 import { BadRequestError, NotFoundError } from "../utils/errors/customError.js";
 import {
@@ -8,6 +13,8 @@ import {
   verifyBankAccount,
 } from "../utils/payment/paystack.js";
 import UploadService from "./uploadService.js";
+import { ICartItem } from "../config/db/models/CartModel.js";
+import { UserModel } from "../config/db/models/index.js";
 
 class StoreService {
   // ───────────────────────────────────────────────
@@ -28,9 +35,35 @@ class StoreService {
 
   /** 🏬 Create a new store (vendor only) */
   static async createStore(
-    data: Omit<IStore, "id" | "created_at" | "updated_at">
+    data: Omit<
+      IStore,
+      | "id"
+      | "slug"
+      | "category"
+      | "logo_public_id"
+      | "cover_image_public_id"
+      // | "email"
+      | "phone_number"
+      | "website"
+      | "total_revenue"
+      | "total_orders"
+      | "total_products"
+      | "active_customers"
+      | "products_listed"
+      | "recipient_code"
+      | "settlement_email"
+      | "payout_verified"
+      | "analytics"
+      | "customers"
+      | "address"
+      | "created_at"
+      | "updated_at"
+      | "account_number"
+      | "bank_code"
+      | "bank_name"
+    >
   ) {
-    if (!data.user_id || !data.store_name)
+    if (!data.user_id || !data.store_name || !data.email)
       throw new BadRequestError("Missing required store fields");
 
     const existing = await StoreModel.findOne({ store_name: data.store_name });
@@ -284,13 +317,98 @@ class StoreService {
     return { success: true, message: "Store deleted successfully" };
   }
 
+  static async storeNameExists(store_name: string): Promise<boolean> {
+    const cleaned = store_name.trim().toLowerCase();
+    const existing = await StoreModel.findOne({ store_name: cleaned });
+    return existing ? true : false;
+  }
+
   // ───────────────────────────────────────────────
   // 📊 UPDATE ANALYTICS
   // ───────────────────────────────────────────────
+  // static async updateStoreAnalytics(
+  //   storeId: string,
+  //   amount: number,
+  //   customerId?: string
+  // ) {
+  //   const store = await StoreModel.findById(storeId);
+  //   if (!store) throw new NotFoundError("Store not found");
+
+  //   const now = new Date();
+  //   const monthNames = [
+  //     "Jan",
+  //     "Feb",
+  //     "Mar",
+  //     "Apr",
+  //     "May",
+  //     "Jun",
+  //     "Jul",
+  //     "Aug",
+  //     "Sep",
+  //     "Oct",
+  //     "Nov",
+  //     "Dec",
+  //   ];
+  //   const month = monthNames[now.getMonth()];
+  //   const year = now.getFullYear();
+
+  //   const analytics = store.analytics || {
+  //     sales: [],
+  //     orders: [],
+  //     customers: [],
+  //   };
+
+  //   const findRec = (arr: any[]) =>
+  //     arr.find((r) => r.month === month && r.year === year);
+
+  //   // SALES
+  //   const salesRec = findRec(analytics.sales);
+  //   if (salesRec) salesRec.amount += amount;
+  //   else analytics.sales.push({ month, year, amount });
+
+  //   // ORDERS
+  //   const orderRec = findRec(analytics.orders);
+  //   if (orderRec) orderRec.count += 1;
+  //   else analytics.orders.push({ month, year, count: 1 });
+
+  //   // CUSTOMERS
+  //   if (customerId) {
+  //     const custRec = findRec(analytics.customers);
+
+  //     if (custRec) {
+  //       if (!custRec.list.includes(customerId)) {
+  //         custRec.list.push(customerId);
+  //         custRec.count += 1;
+  //       }
+  //     } else {
+  //       analytics.customers.push({
+  //         month,
+  //         year,
+  //         count: 1,
+  //         list: [customerId],
+  //       });
+  //     }
+  //   }
+
+  //   const uniqueCustomers = new Set(analytics.customers.flatMap((c) => c.list))
+  //     .size;
+
+  //   await StoreModel.update(storeId, {
+  //     analytics,
+  //     total_revenue: Number(store.total_revenue || 0) + amount,
+  //     total_orders: Number(store.total_orders || 0) + 1,
+  //     active_customers: uniqueCustomers,
+  //     updated_at: new Date().toISOString(),
+  //   });
+
+  //   return analytics;
+  // }
+
   static async updateStoreAnalytics(
     storeId: string,
     amount: number,
-    customerId?: string
+    customerId: string,
+    orderItems: ICartItem[]
   ) {
     const store = await StoreModel.findById(storeId);
     if (!store) throw new NotFoundError("Store not found");
@@ -310,8 +428,10 @@ class StoreService {
       "Nov",
       "Dec",
     ];
+
     const month = monthNames[now.getMonth()];
     const year = now.getFullYear();
+    const today = now.toISOString();
 
     const analytics = store.analytics || {
       sales: [],
@@ -319,50 +439,93 @@ class StoreService {
       customers: [],
     };
 
-    const findRecord = (arr: any[], key: string) =>
+    const customers = store.customers || [];
+
+    const findRec = (arr: any[]) =>
       arr.find((r) => r.month === month && r.year === year);
 
-    const salesRecord = findRecord(analytics.sales, "amount");
-    if (salesRecord) salesRecord.amount += amount;
+    // --------------------------------------
+    // ⭐ SALES
+    // --------------------------------------
+    const salesRec = findRec(analytics.sales);
+    if (salesRec) salesRec.amount += amount;
     else analytics.sales.push({ month, year, amount });
 
-    const orderRecord = findRecord(analytics.orders, "count");
-    if (orderRecord) orderRecord.count += 1;
+    // --------------------------------------
+    // ⭐ ORDERS COUNT
+    // --------------------------------------
+    const orderRec = findRec(analytics.orders);
+    if (orderRec) orderRec.count += 1;
     else analytics.orders.push({ month, year, count: 1 });
 
-    if (customerId) {
-      const customerRecord = findRecord(analytics.customers, "count");
-      if (customerRecord) {
-        if (!customerRecord.list.includes(customerId)) {
-          customerRecord.list.push(customerId);
-          customerRecord.count += 1;
-        }
-      } else {
-        analytics.customers.push({ month, year, count: 1, list: [customerId] });
+    // --------------------------------------
+    // ⭐ UNIQUE MONTHLY CUSTOMERS
+    // --------------------------------------
+    const custRec = findRec(analytics.customers);
+
+    if (custRec) {
+      if (!custRec.list.includes(customerId)) {
+        custRec.list.push(customerId);
+        custRec.count += 1;
       }
+    } else {
+      analytics.customers.push({
+        month,
+        year,
+        count: 1,
+        list: [customerId],
+      });
     }
 
-    const sortByDate = (arr: any[]) =>
-      arr.sort(
-        (a, b) =>
-          a.year - b.year ||
-          monthNames.indexOf(a.month) - monthNames.indexOf(b.month)
-      );
+    // --------------------------------------
+    // ⭐ UPDATE STORE CUSTOMER LIST
+    // --------------------------------------
+    const customer = await UserModel.findById(customerId).catch(() => null);
 
-    analytics.sales = sortByDate(analytics.sales);
-    analytics.orders = sortByDate(analytics.orders);
-    analytics.customers = sortByDate(analytics.customers);
+    const fullCustomerName = `${customer?.first_name ?? ""} ${
+      customer?.last_name ?? ""
+    }`.trim();
 
-    const totalRevenue = (Number(store.total_revenue) || 0) + amount;
-    const totalOrders = (Number(store.total_orders) || 0) + 1;
-    const uniqueCustomers = new Set(
-      analytics.customers.flatMap((c: any) => c.list || [])
-    ).size;
+    const location =
+      customer?.address?.city ||
+      customer?.address?.state ||
+      customer?.address?.country ||
+      null;
 
+    // Check if customer already in store.customers
+    const existingCustomer = customers.find((c) => c.id === customerId);
+
+    if (existingCustomer) {
+      // Update previous record
+      existingCustomer.orders += 1;
+      existingCustomer.spent += amount;
+      existingCustomer.last_order_date = today;
+    } else {
+      // Create new customer record
+      customers.push({
+        id: customerId,
+        name: fullCustomerName,
+        email: customer?.email ?? "",
+        phone_number: customer?.phone_number ?? null,
+        location,
+        orders: 1,
+        spent: amount,
+        rating: 0, // optional for later
+        last_order_date: today,
+      });
+    }
+
+    // Unique customers count
+    const uniqueCustomers = customers.length;
+
+    // --------------------------------------
+    // ⭐ Save Store
+    // --------------------------------------
     await StoreModel.update(storeId, {
       analytics,
-      total_revenue: totalRevenue,
-      total_orders: totalOrders,
+      customers,
+      total_revenue: Number(store.total_revenue || 0) + amount,
+      total_orders: Number(store.total_orders || 0) + 1,
       active_customers: uniqueCustomers,
       updated_at: new Date().toISOString(),
     });
@@ -373,57 +536,63 @@ class StoreService {
   // ───────────────────────────────────────────────
   // 📈 GET DASHBOARD ANALYTICS
   // ───────────────────────────────────────────────
-  static async getAnalytics(storeId: string) {
+  static async getAnalytics(storeId: string, userId: string, role: string) {
     if (!storeId) throw new BadRequestError("Store ID is required");
 
     const store = await StoreModel.findById(storeId);
     if (!store) throw new NotFoundError("Store not found");
 
-    const analytics = store.analytics || {
+    // 🛑 Vendor can only see analytics for their own store
+    if (role === "vendor" && store.user_id !== userId) {
+      throw new BadRequestError(
+        "You are not allowed to view this store's analytics"
+      );
+    }
+
+    // Ensure analytics + customers exist
+    const analytics: IAnalytics = store.analytics || {
       sales: [],
       orders: [],
       customers: [],
     };
 
+    const customers: IStoreCustomer[] = store.customers || [];
+
+    // ─────────────────────────────────────────────
+    // 📊 SUMMARY METRICS
+    // ─────────────────────────────────────────────
     const totalSales = store.total_revenue || 0;
     const totalOrders = store.total_orders || 0;
     const totalCustomers = store.active_customers || 0;
+
     const conversionRate =
       totalCustomers > 0
         ? parseFloat(((totalOrders / totalCustomers) * 100).toFixed(1))
         : 0;
 
-    const sortedSales = [...(analytics.sales || [])].sort(
+    // ─────────────────────────────────────────────
+    // 📈 SORT MONTHLY SALES FOR GRAPH
+    // ─────────────────────────────────────────────
+
+    const monthOrder = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
+
+    const sortedSales = [...analytics.sales].sort(
       (a, b) =>
         a.year - b.year ||
-        [
-          "Jan",
-          "Feb",
-          "Mar",
-          "Apr",
-          "May",
-          "Jun",
-          "Jul",
-          "Aug",
-          "Sep",
-          "Oct",
-          "Nov",
-          "Dec",
-        ].indexOf(a.month) -
-          [
-            "Jan",
-            "Feb",
-            "Mar",
-            "Apr",
-            "May",
-            "Jun",
-            "Jul",
-            "Aug",
-            "Sep",
-            "Oct",
-            "Nov",
-            "Dec",
-          ].indexOf(b.month)
+        monthOrder.indexOf(a.month) - monthOrder.indexOf(b.month)
     );
 
     const lastMonth = sortedSales[sortedSales.length - 2];
@@ -439,6 +608,22 @@ class StoreService {
         ? getChange(thisMonth.amount, lastMonth.amount)
         : 0;
 
+    // ─────────────────────────────────────────────
+    // ⭐ TOP PRODUCTS (Require total_sold on product table)
+    // ─────────────────────────────────────────────
+
+    const { data: topProducts } = await ProductModel.findAll(
+      { store_id: storeId },
+      {
+        page: 1,
+        limit: 10,
+        orderBy: "total_sold DESC",
+      }
+    );
+
+    // ─────────────────────────────────────────────
+    // ⭐ FINAL RESPONSE
+    // ─────────────────────────────────────────────
     return {
       summary: {
         total_sales: totalSales,
@@ -450,7 +635,17 @@ class StoreService {
         customers_change: 0,
         conversion_rate_change: 0,
       },
-      chart: { sales_trend: sortedSales },
+
+      chart: {
+        sales_trend: sortedSales,
+        orders_trend: analytics.orders || [],
+        customers_trend: analytics.customers || [],
+      },
+
+      top_products: topProducts,
+
+      customers, // ⭐ FULL CUSTOMER LIST (IStoreCustomer[])
+      analytics, // ⭐ FULL RAW ANALYTICS
     };
   }
 

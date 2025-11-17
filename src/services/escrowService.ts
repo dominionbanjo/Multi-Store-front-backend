@@ -12,6 +12,7 @@ import { BadRequestError, NotFoundError } from "../utils/errors/customError.js";
 import { initiateTransfer } from "../utils/payment/paystack.js";
 import { EscrowMailService } from "../utils/mails/EscrowMailService.js";
 import PayoutService from "./payoutService.js";
+import StoreService from "./storeService.js";
 
 /**
  * 💰 Escrow Service (Idempotent-safe)
@@ -186,7 +187,6 @@ export class EscrowService {
     return updated;
   }
 
-  /** 🔓 Release escrow funds (idempotent) */
   /** 🔓 Release escrow funds (secure + trial count + lockout + idempotent) */
   static async releaseEscrow(order_id: string, code: string, user_id: string) {
     const now = new Date().toISOString();
@@ -294,14 +294,15 @@ export class EscrowService {
       updated_at: now,
     });
 
-    /* ---------------------- 13. Update Store Stats & Customers ----------------- */
-    await this.updateStoreStatsAndCustomers(
+    /* --------------------------- 13. Update Store Analytics -------------------- */
+    await StoreService.updateStoreAnalytics(
       store.id,
+      escrow.amount,
       order.buyer_id,
-      escrow.amount
+      order.order_items
     );
 
-    /* ---------------------------- 14. Notification ----------------------------- */
+    /* ---------------------------- 14. Notify Vendor ---------------------------- */
     const vendor = await UserModel.findById(order.vendor_id).catch(() => null);
 
     if (vendor?.email) {
@@ -455,84 +456,4 @@ export class EscrowService {
   // ───────────────────────────────────────────────
   // 📈 Update store analytics
   // ───────────────────────────────────────────────
-  private static async updateStoreStatsAndCustomers(
-    store_id: string,
-    buyer_id: string,
-    amount: number
-  ) {
-    const store = await StoreModel.findById(store_id);
-    if (!store) return;
-
-    const buyer = await UserModel.findById(buyer_id);
-    if (!buyer) return;
-
-    const total_revenue = Number(store.total_revenue || 0) + amount;
-    const total_orders = Number(store.total_orders || 0) + 1;
-
-    const now = new Date();
-    const month = now.toLocaleString("default", { month: "short" });
-    const year = now.getFullYear();
-
-    const analytics = store.analytics || {
-      sales: [],
-      orders: [],
-      customers: [],
-    };
-
-    const sale = analytics.sales.find(
-      (s) => s.month === month && s.year === year
-    );
-    if (sale) sale.amount += amount;
-    else analytics.sales.push({ month, year, amount });
-
-    const orderRec = analytics.orders.find(
-      (o) => o.month === month && o.year === year
-    );
-    if (orderRec) orderRec.count += 1;
-    else analytics.orders.push({ month, year, count: 1 });
-
-    const customers = (store.customers || []) as IStoreCustomer[];
-    const spent = Number(amount);
-    const last_order_date = now.toISOString();
-
-    const existing = customers.find((c) => c.id === buyer.id);
-
-    let buyerLocation: string | undefined = undefined;
-    if (buyer.address) {
-      const { city, state, country } = buyer.address;
-      const parts = [city, state, country].filter(Boolean);
-      if (parts.length > 0) buyerLocation = parts.join(", ");
-    }
-
-    if (existing) {
-      existing.orders += 1;
-      existing.spent += spent;
-      existing.last_order_date = last_order_date;
-      existing.rating = buyer.rating_average || existing.rating;
-      if (buyerLocation) existing.location = buyerLocation;
-    } else {
-      customers.push({
-        id: buyer.id,
-        name: `${buyer.first_name} ${buyer.last_name}`,
-        email: buyer.email,
-        phone_number: buyer.phone_number,
-        location: buyerLocation || null,
-        orders: 1,
-        spent,
-        rating: buyer.rating_average || 0,
-        last_order_date,
-      });
-    }
-
-    const active_customers = customers.length;
-
-    await StoreModel.update(store_id, {
-      analytics,
-      customers,
-      total_revenue,
-      total_orders,
-      active_customers,
-      updated_at: new Date().toISOString(),
-    });
-  }
 }

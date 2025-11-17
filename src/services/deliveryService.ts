@@ -10,6 +10,7 @@ import { EscrowService } from "./escrowService.js";
 import { DeliveryMailService } from "../utils/mails/DeliveryMailService.js";
 import { UserModel } from "../config/db/models/UserModel.js";
 import { EscrowModel } from "../config/db/models/EscrowModel.js";
+import StoreService from "./storeService.js";
 
 /**
  * 🚚 Delivery Service (Idempotent + Full Mail Notifications)
@@ -36,15 +37,19 @@ export class DeliveryService {
     if (!order_id || !buyer_id || !vendor_id)
       throw new BadRequestError("Missing required delivery fields");
 
-    // If delivery already exists, return it — idempotent
+    // 🔁 Idempotent — delivery already exists
     const existing = await DeliveryModel.findOne({ order_id });
     if (existing) return existing;
 
-    // 🔥 Fetch buyer address (NEW)
+    // 🧾 Fetch order to extract items
+    const order = await OrderModel.findById(order_id);
+    if (!order) throw new NotFoundError("Order not found");
+
+    // 🔎 Fetch buyer + address
     const buyer = await UserModel.findById(buyer_id);
     if (!buyer) throw new BadRequestError("Buyer not found");
 
-    const addr = buyer.address || {}; // fallback empty object
+    const addr = buyer.address || {};
 
     const now = new Date().toISOString();
 
@@ -53,22 +58,30 @@ export class DeliveryService {
       order_id,
       buyer_id,
       vendor_id,
-      courier_id: data.courier_id || null,
+      courier_id: data.courier_id ?? null,
 
-      // 🏠 Automatically pull from buyer.address
+      // 🛍 Store snapshot of the order items
+      order_items: order.order_items,
+
+      // 🏠 Auto-fill from buyer profile unless provided
       address: data.address ?? addr.street ?? null,
       city: data.city ?? addr.city ?? null,
       state: data.state ?? addr.state ?? null,
       country: data.country ?? addr.country ?? null,
       postal_code: data.postal_code ?? addr.postal_code ?? null,
 
-      tracking_number: data.tracking_number || null,
-      estimated_delivery: data.estimated_delivery || null,
+      tracking_number: data.tracking_number ?? null,
+      estimated_delivery: data.estimated_delivery ?? null,
+
       delivery_status: "pending",
+      confirmation_code: null,
+      proof_of_delivery_url: null,
+
       created_at: now,
       updated_at: now,
     });
 
+    // Notify buyer + vendor
     const vendor = await UserModel.findById(vendor_id);
 
     if (buyer?.email) {
@@ -146,6 +159,42 @@ export class DeliveryService {
     const delivery = await DeliveryModel.findById(delivery_id);
     if (!delivery) throw new NotFoundError("Delivery not found");
 
+    const order = await OrderModel.findById(delivery.order_id);
+
+    /** -------------------------------------------------------
+     * 1. Prevent setting "confirmed" — only confirmDelivery()
+     * ------------------------------------------------------- */
+    if (status === "confirmed") {
+      throw new BadRequestError(
+        "Only the vendor confirmation process can set status to confirmed"
+      );
+    }
+
+    /** -------------------------------------------------------
+     * 2. Prevent moving backward in delivery flow
+     * ------------------------------------------------------- */
+    const FLOW: DeliveryStatus[] = [
+      "pending",
+      "assigned",
+      "in_transit",
+      "delivered",
+      "confirmed",
+      "failed",
+      "returned",
+    ];
+
+    const currentIndex = FLOW.indexOf(delivery.delivery_status);
+    const newIndex = FLOW.indexOf(status);
+
+    if (newIndex < currentIndex && !["failed", "returned"].includes(status)) {
+      throw new BadRequestError(
+        `Cannot move delivery status backward from ${delivery.delivery_status} → ${status}`
+      );
+    }
+
+    /** -------------------------------------------------------
+     * 3. Idempotency
+     * ------------------------------------------------------- */
     if (delivery.delivery_status === status) {
       return {
         success: true,
@@ -154,15 +203,18 @@ export class DeliveryService {
       };
     }
 
+    /** -------------------------------------------------------
+     * 4. Safe update
+     * ------------------------------------------------------- */
     await DeliveryModel.update(delivery_id, {
       delivery_status: status,
       updated_at: new Date().toISOString(),
     });
 
-    const order = await OrderModel.findById(delivery.order_id);
     const buyer = await UserModel.findById(order.buyer_id);
     const vendor = await UserModel.findById(order.vendor_id);
 
+    // Send notification emails (unchanged)
     if (buyer?.email) {
       await DeliveryMailService.sendDeliveryStatusUpdateBuyer({
         email: buyer.email,
@@ -181,13 +233,12 @@ export class DeliveryService {
       });
     }
 
-    /* --------------------------------------------------------------------------
-       WHEN THE PACKAGE IS MARKED DELIVERED → SEND RELEASE CODE TO BUYER
-    -------------------------------------------------------------------------- */
+    /** -------------------------------------------------------
+     * 5. Special case: delivered → send release code
+     * ------------------------------------------------------- */
     if (status === "delivered" && order.payment_method === "online") {
-      if (!order.escrow_id) {
+      if (!order.escrow_id)
         throw new BadRequestError("Escrow record missing for this order");
-      }
 
       const escrow = await EscrowModel.findById(order.escrow_id);
       if (!escrow) throw new NotFoundError("Escrow not found");

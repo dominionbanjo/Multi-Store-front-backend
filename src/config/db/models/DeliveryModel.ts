@@ -1,4 +1,5 @@
 import { BaseModel, SchemaDefinition } from "../helpers/BaseModel.js";
+import { ICartItem } from "./CartModel";
 
 export type DeliveryStatus =
   | "pending"
@@ -15,6 +16,7 @@ export interface IDelivery {
   courier_id: string | null;
   buyer_id: string;
   vendor_id: string;
+  order_items: ICartItem[];
 
   address: string | null;
   city: string | null;
@@ -69,6 +71,11 @@ class DeliveryModelClass extends BaseModel<IDelivery> {
       references: "users(id)",
       onDelete: "CASCADE",
       onUpdate: "CASCADE",
+    },
+    order_items: {
+      type: "JSONB",
+      notNull: true,
+      default: "'[]'::jsonb",
     },
 
     // ⬇️ Made address/location fields nullable
