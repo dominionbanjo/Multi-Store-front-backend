@@ -32,6 +32,8 @@ export interface IUser {
   store_name: string | null;
   username: string | null;
 
+  token_version: number;
+
   referral_code: string | null;
   current_sales_channel: SalesChannel | null;
   agree_to_terms: boolean | null;
@@ -98,6 +100,8 @@ class UserModelClass extends BaseModel<IUser> {
 
     store_name: { type: "VARCHAR(100)" },
     username: { type: "VARCHAR(100)" },
+
+    token_version: { type: "INT", default: "0", notNull: true },
 
     referral_code: { type: "VARCHAR(50)", default: "NULL" },
 

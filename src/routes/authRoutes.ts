@@ -6,6 +6,7 @@ import {
   resetPassword,
   verifyOtp,
   resendOtp,
+  logout,
 } from "../controllers/authController.js";
 import {
   validateRegisterInput,
@@ -16,6 +17,7 @@ import {
   validateResendOtpVerification,
 } from "../utils/validations/index.js";
 import { continueWithGoogle } from "../controllers/googleAuthController.js";
+import { authenticateUser } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
 
@@ -26,5 +28,6 @@ router.post("/reset-password", validateResetPassword, resetPassword);
 router.post("/verify-otp", validateOtpVerification, verifyOtp);
 router.post("/resend-otp", validateResendOtpVerification, resendOtp);
 router.post("/google", continueWithGoogle);
+router.post("/logout", authenticateUser, logout);
 
 export default router;

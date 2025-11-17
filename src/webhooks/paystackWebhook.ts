@@ -45,9 +45,9 @@ export class PaystackWebhookController {
 
         // AMOUNT VALIDATION
         const amountPaid = data.amount / 100;
-        if (amountPaid !== order.total) {
+        if (Number(amountPaid) !== Number(order.total)) {
           console.error(
-            `SECURITY ALERT: Webhook amount mismatch for ${order.id}. Paid ${amountPaid}, expected ${order.total}`
+            `SECURITY ALERT: Webhook mismatch. Paid ${amountPaid}, expected ${order.total}`
           );
           return res.sendStatus(200);
         }

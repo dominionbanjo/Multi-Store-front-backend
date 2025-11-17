@@ -5,6 +5,7 @@ interface JwtUserPayload {
   userId: string;
   name: string;
   role: string;
+  tokenVersion: number;
 }
 
 export const createJWT = (payload: JwtUserPayload): string => {
