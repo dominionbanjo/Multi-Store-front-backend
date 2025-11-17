@@ -9,7 +9,7 @@ import {
   createPaystackOrder,
   verifyPaystackOrder,
   verifyBankAccountController,
-  markOrderPaidOfflineController,
+  fulfillOfflineDeliveryController,
 } from "../controllers/orderController.js";
 import {
   authenticateUser,
@@ -54,9 +54,10 @@ router.post("/", createOrder);
 
 // ✔ Mark an OFFLINE order as PAID manually
 router.patch(
-  "/:id/mark-paid-offline",
-  authorizePermissions("admin", "vendor"),
-  markOrderPaidOfflineController
+  "/:id/fulfill-offline",
+  authenticateUser,
+  authorizePermissions("vendor", "admin"),
+  fulfillOfflineDeliveryController
 );
 
 // ───────────────────────────────────────────────

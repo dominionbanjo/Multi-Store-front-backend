@@ -4,6 +4,7 @@ import {
   OrderModel,
   IOrder,
   OrderStatus,
+  PaymentStatus,
 } from "../config/db/models/OrderModel.js";
 import { EscrowService } from "./escrowService.js";
 import { DeliveryService } from "./deliveryService.js";
@@ -12,11 +13,19 @@ import {
   verifyPaystackPayment,
 } from "../utils/payment/paystack.js";
 import { ICartItem } from "../config/db/models/CartModel.js";
-import { ProductModel, TransactionModel } from "../config/db/models/index.js";
+import {
+  DeliveryModel,
+  ProductModel,
+  StoreModel,
+  TransactionModel,
+} from "../config/db/models/index.js";
 import { OrderMailService } from "../utils/mails/OrderMailService.js";
 import { UserModel } from "../config/db/models/UserModel.js";
 
 export class OrderService {
+  /* -------------------------------------------------------------------------- */
+  /*  VALIDATE ITEMS USING DB (unchanged)                                       */
+  /* -------------------------------------------------------------------------- */
   private static async buildOrderItems(order_items: ICartItem[]) {
     let subtotal = 0;
     const validated: ICartItem[] = [];
@@ -25,11 +34,71 @@ export class OrderService {
       const product = await ProductModel.findById(item.product_id);
       if (!product)
         throw new BadRequestError(`Product not found: ${item.product_id}`);
-      if (item.quantity < 1 || item.quantity > product.stock)
-        throw new BadRequestError(
-          "Invalid quantity request or product out of stock"
-        );
 
+      // Validate quantity
+      if (item.quantity < 1 || item.quantity > product.stock) {
+        throw new BadRequestError(
+          `Invalid quantity for '${product.name}'. Available stock: ${product.stock}`
+        );
+      }
+
+      /* ---------------------------------------------------------
+       * ⭐ SIZE VALIDATION — works for products with OR without sizes
+       * --------------------------------------------------------- */
+      const productSizes = product.sizes?.map((s) => s.trim()) || [];
+
+      if (productSizes.length > 0) {
+        // Product has sizes → size is required
+        if (!item.size) {
+          throw new BadRequestError(
+            `Size is required for '${
+              product.name
+            }'. Available sizes: ${productSizes.join(", ")}`
+          );
+        }
+
+        if (!productSizes.includes(String(item.size).trim())) {
+          throw new BadRequestError(
+            `Invalid size '${item.size}' for '${
+              product.name
+            }'. Available sizes: ${productSizes.join(", ")}`
+          );
+        }
+      } else {
+        // Product has NO sizes → ignore provided size
+        item.size = null;
+      }
+
+      /* ---------------------------------------------------------
+       * ⭐ COLOR VALIDATION — works for products with OR without colors
+       * --------------------------------------------------------- */
+      const productColors = product.colors?.map((c) => c.trim()) || [];
+
+      if (productColors.length > 0) {
+        // Product has colors → color is required
+        if (!item.color) {
+          throw new BadRequestError(
+            `Color is required for '${
+              product.name
+            }'. Available colors: ${productColors.join(", ")}`
+          );
+        }
+
+        if (!productColors.includes(String(item.color).trim())) {
+          throw new BadRequestError(
+            `Invalid color '${item.color}' for '${
+              product.name
+            }'. Available colors: ${productColors.join(", ")}`
+          );
+        }
+      } else {
+        // Product has NO colors → ignore provided color
+        item.color = null;
+      }
+
+      /* ---------------------------------------------------------
+       * ⭐ PRICE + CALCULATION
+       * --------------------------------------------------------- */
       const basePrice = product.price;
       const discount = product.discount_price;
       const finalUnitPrice = discount ?? basePrice;
@@ -56,184 +125,282 @@ export class OrderService {
   }
 
   /* -------------------------------------------------------------------------- */
-  /*                       🟡 1. CREATE ORDER (OFFLINE)                         */
+  /* 🔥 1. CREATE OFFLINE ORDER — MULTI-VENDOR (AUTO CREATES DELIVERY)          */
   /* -------------------------------------------------------------------------- */
   static async createOrder(data: {
     buyer_id: string;
-    vendor_id: string;
-    store_id: string;
     tax?: number;
     notes?: string;
     order_items: ICartItem[];
     payment_method: "offline";
-  }): Promise<IOrder> {
+  }) {
     if (!data.order_items || data.order_items.length === 0)
       throw new BadRequestError("Order items are required");
 
     const now = new Date().toISOString();
 
-    // 🔒 Validate & build items using backend data
-    const { validatedItems, subtotal } = await this.buildOrderItems(
-      data.order_items
-    );
+    const { validatedItems } = await this.buildOrderItems(data.order_items);
 
-    const shipping_fee = 0; // Or fetch from store settings
-    const tax = data.tax ?? 0;
-    const total = subtotal + shipping_fee + tax;
+    // Group items by vendor
+    const groups: Record<string, ICartItem[]> = {};
+    for (const item of validatedItems) {
+      const product = await ProductModel.findById(item.product_id);
+      const vendorId = product.vendor_id;
 
-    const order = await OrderModel.create({
-      id: uuidv4(),
-      buyer_id: data.buyer_id,
-      vendor_id: data.vendor_id,
-      store_id: data.store_id,
-      order_items: validatedItems,
-      subtotal,
-      shipping_fee,
-      tax,
-      total,
-      payment_method: "offline",
-      payment_reference: null,
-      payment_url: null,
-      payment_status: "unpaid",
-      escrow_id: null,
-      status: "pending",
-      notes: data.notes ?? null,
-      created_at: now,
-      updated_at: now,
-    });
-
-    await TransactionModel.create({
-      id: uuidv4(),
-      order_id: order.id,
-      user_id: data.buyer_id,
-      vendor_id: data.vendor_id,
-      store_id: data.store_id,
-      type: "order_created",
-      amount: total,
-      currency: "NGN",
-      status: "pending",
-      description: "Offline order created",
-      metadata: null,
-      created_at: now,
-      updated_at: now,
-    });
-
-    // ─────────────────────────────────────────────────────
-    // SEND EMAILS (Buyer + Vendor) for order creation
-    // ─────────────────────────────────────────────────────
-    try {
-      const buyer = await UserModel.findById(data.buyer_id).catch(() => null);
-      const vendor = await UserModel.findById(data.vendor_id).catch(() => null);
-
-      if (buyer?.email) {
-        await OrderMailService.sendOrderCreated({
-          email: buyer.email,
-          name: buyer.first_name,
-          order,
-        });
-      }
-
-      if (vendor?.email) {
-        await OrderMailService.sendVendorNewOrder({
-          email: vendor.email,
-          name: vendor.first_name ?? vendor.store_name ?? "Vendor",
-          order,
-        });
-      }
-    } catch (err) {
-      // Do not fail the order if emails fail; just log
-      console.error("Order creation email error:", err);
+      if (!groups[vendorId]) groups[vendorId] = [];
+      groups[vendorId].push(item);
     }
 
-    return order;
-  }
+    const orders: IOrder[] = [];
 
-  /* -------------------------------------------------------------------------- */
-  /*                       🟡 2. MARK OFFLINE ORDER PAID                        */
-  /* -------------------------------------------------------------------------- */
-  static async markOrderPaidOffline(order_id: string) {
-    const order = await OrderModel.findById(order_id);
-    if (!order) throw new NotFoundError("Order not found");
+    // Create offline orders per vendor
+    for (const vendor_id of Object.keys(groups)) {
+      const vendorItems = groups[vendor_id];
 
-    if (order.payment_method !== "offline") {
-      throw new BadRequestError(
-        "Only offline orders can be marked paid manually"
-      );
-    }
-
-    const now = new Date().toISOString();
-
-    const updatedOrder = await OrderModel.update(order.id, {
-      payment_status: "success",
-      status: "paid",
-      updated_at: now,
-    });
-
-    await DeliveryService.createDelivery({
-      order_id: order.id,
-      buyer_id: order.buyer_id,
-      vendor_id: order.vendor_id,
-    });
-
-    /** Log transaction (OFFLINE PAYMENT) */
-    await TransactionModel.create({
-      id: uuidv4(),
-      order_id: order.id,
-      user_id: order.buyer_id,
-      vendor_id: order.vendor_id,
-      store_id: order.store_id,
-      type: "payment_offline",
-      amount: order.total,
-      currency: "NGN",
-      status: "success",
-      description: "Offline payment confirmed",
-      metadata: null,
-      created_at: now,
-      updated_at: now,
-    });
-
-    // ─────────────────────────────────────────────────────
-    // SEND EMAILS: Payment verified for offline payment
-    // ─────────────────────────────────────────────────────
-    try {
-      const buyer = await UserModel.findById(order.buyer_id).catch(() => null);
-      const vendor = await UserModel.findById(order.vendor_id).catch(
-        () => null
-      );
-
-      if (buyer?.email) {
-        await OrderMailService.sendPaymentVerified({
-          email: buyer.email,
-          name: buyer.first_name,
-          order: updatedOrder,
-        });
+      let subtotal = 0;
+      for (const item of vendorItems) {
+        subtotal += (item.discount_price ?? item.price) * item.quantity;
       }
 
-      if (vendor?.email) {
-        await OrderMailService.sendVendorPaymentVerified({
-          email: vendor.email,
-          name: vendor.first_name ?? vendor.store_name ?? "Vendor",
-          order: updatedOrder,
-        });
+      const shipping_fee = 0;
+      const tax = data.tax ?? 0;
+      const total = subtotal + shipping_fee + tax;
+
+      // Create the order
+      const order = await OrderModel.create({
+        id: uuidv4(),
+        buyer_id: data.buyer_id,
+        vendor_id,
+        order_items: vendorItems,
+        subtotal,
+        shipping_fee,
+        tax,
+        total,
+        payment_method: "offline",
+        payment_reference: null,
+        payment_url: null,
+        payment_access_code: null,
+        payment_status: "unpaid",
+        escrow_id: null,
+        delivery_id: null,
+        status: "pending",
+        notes: data.notes ?? null,
+        created_at: now,
+        updated_at: now,
+      });
+
+      // Log the order creation
+      await TransactionModel.create({
+        id: uuidv4(),
+        order_id: order.id,
+        user_id: data.buyer_id,
+        vendor_id,
+        type: "order_created",
+        amount: total,
+        currency: "NGN",
+        status: "pending",
+        description: "Offline order created",
+        metadata: null,
+        created_at: now,
+        updated_at: now,
+      });
+
+      // 🔥 Automatically create a delivery record
+      const delivery = await DeliveryService.createDelivery({
+        order_id: order.id,
+        buyer_id: data.buyer_id,
+        vendor_id,
+      });
+
+      // Attach delivery to order
+      await OrderModel.update(order.id, {
+        delivery_id: delivery.id,
+      });
+
+      order.delivery_id = delivery.id;
+
+      // Send emails
+      try {
+        const buyer = await UserModel.findById(data.buyer_id).catch(() => null);
+        const vendor = await UserModel.findById(vendor_id).catch(() => null);
+
+        if (buyer?.email) {
+          await OrderMailService.sendOrderCreated({
+            email: buyer.email,
+            name: buyer.first_name,
+            order,
+          });
+        }
+
+        if (vendor?.email) {
+          await OrderMailService.sendVendorNewOrder({
+            email: vendor.email,
+            name: vendor.first_name ?? vendor.store_name ?? "Vendor",
+            order,
+          });
+        }
+      } catch (err) {
+        console.error("Offline order email error:", err);
       }
-    } catch (err) {
-      console.error("Offline payment email error:", err);
+
+      orders.push(order);
     }
 
     return {
       success: true,
-      message: "Offline order marked paid",
-      order: updatedOrder,
+      successfulOrders: orders.map((o) => ({ order: o })),
+      failedVendors: [],
     };
   }
 
   /* -------------------------------------------------------------------------- */
-  /*                 🟢 3. CREATE ORDER + PAYSTACK INITIALIZATION               */
+  /* 🔥 2. MARK OFFLINE ORDER PAID                                              */
+  /* -------------------------------------------------------------------------- */
+  // static async markOrderPaidOffline(order_id: string) {
+  //   const order = await OrderModel.findById(order_id);
+  //   if (!order) throw new NotFoundError("Order not found");
+
+  //   if (order.payment_method !== "offline") {
+  //     throw new BadRequestError("Only offline orders can be marked paid");
+  //   }
+
+  //   const now = new Date().toISOString();
+
+  //   const updatedOrder = await OrderModel.update(order.id, {
+  //     payment_status: "success",
+  //     status: "paid",
+  //     updated_at: now,
+  //   });
+
+  //   await DeliveryService.createDelivery({
+  //     order_id: order.id,
+  //     buyer_id: order.buyer_id,
+  //     vendor_id: order.vendor_id,
+  //   });
+
+  //   await TransactionModel.create({
+  //     id: uuidv4(),
+  //     order_id: order.id,
+  //     user_id: order.buyer_id,
+  //     vendor_id: order.vendor_id,
+  //     type: "payment_offline",
+  //     amount: order.total,
+  //     currency: "NGN",
+  //     status: "success",
+  //     description: "Offline payment confirmed",
+  //     metadata: null,
+  //     created_at: now,
+  //     updated_at: now,
+  //   });
+
+  //   try {
+  //     const buyer = await UserModel.findById(order.buyer_id).catch(() => null);
+  //     const vendor = await UserModel.findById(order.vendor_id).catch(
+  //       () => null
+  //     );
+
+  //     if (buyer?.email) {
+  //       await OrderMailService.sendPaymentVerified({
+  //         email: buyer.email,
+  //         name: buyer.first_name,
+  //         order: updatedOrder,
+  //       });
+  //     }
+
+  //     if (vendor?.email) {
+  //       await OrderMailService.sendVendorPaymentVerified({
+  //         email: vendor.email,
+  //         name: vendor.first_name ?? vendor.store_name ?? "Vendor",
+  //         order: updatedOrder,
+  //       });
+  //     }
+  //   } catch (err) {
+  //     console.error("Offline payment email error:", err);
+  //   }
+
+  //   return {
+  //     success: true,
+  //     message: "Offline order marked paid",
+  //     order: updatedOrder,
+  //   };
+  // }
+
+  static async fulfillOfflineDelivery(order_id: string, vendor_id: string) {
+    const order = await OrderModel.findById(order_id);
+    if (!order) throw new NotFoundError("Order not found");
+
+    if (order.vendor_id !== vendor_id) {
+      throw new BadRequestError("You can only fulfill your own orders");
+    }
+
+    if (order.payment_method !== "offline") {
+      throw new BadRequestError("This is not an offline order");
+    }
+
+    // Delivery must exist
+    const delivery = await DeliveryModel.findOne({ order_id: order_id }); // or findOne({ order_id })
+    if (!delivery) throw new BadRequestError("Delivery record not found");
+
+    const now = new Date().toISOString();
+
+    // Update delivery
+    await DeliveryModel.update(delivery.id, {
+      delivery_status: "confirmed", // final status
+      delivered_at: now,
+      updated_at: now,
+    });
+
+    // Update order
+    const updatedOrder = await OrderModel.update(order.id, {
+      status: "completed",
+      payment_status: "paid" as PaymentStatus, // paid in person
+      updated_at: now,
+    });
+
+    // Transaction log (optional)
+    await TransactionModel.create({
+      id: uuidv4(),
+      order_id: order.id,
+      user_id: order.buyer_id,
+      vendor_id,
+      type: "offline_fulfillment",
+      amount: order.total,
+      currency: "NGN",
+      status: "success",
+      description: "Order fulfilled offline (in-person exchange)",
+      metadata: null,
+      created_at: now,
+      updated_at: now,
+    });
+
+    return {
+      success: true,
+      message: "Offline delivery fulfilled",
+      order: updatedOrder,
+    };
+  }
+
+  private static async validateVendorForOnline(vendor_id: string) {
+    const store = await StoreModel.findOne({ user_id: vendor_id });
+    if (!store) {
+      throw new BadRequestError(`Vendor not found: ${vendor_id}`);
+    }
+
+    if (!store.payout_verified) {
+      throw new BadRequestError(
+        `Vendor  ${store.store_name} "Store"
+         cannot receive online payments`
+      );
+    }
+
+    return store;
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* 🔥 3. CREATE ONLINE ORDER WITH PAYSTACK — MULTI-VENDOR                     */
   /* -------------------------------------------------------------------------- */
   static async createOrderWithPaystack(data: {
     buyer_id: string;
-    vendor_id: string;
-    store_id: string;
     email: string;
     order_items: ICartItem[];
   }) {
@@ -242,102 +409,107 @@ export class OrderService {
 
     const now = new Date().toISOString();
 
-    // 🔒 Validate & build items from DB
-    const { validatedItems, subtotal } = await this.buildOrderItems(
-      data.order_items
-    );
+    const { validatedItems } = await this.buildOrderItems(data.order_items);
 
-    const shipping_fee = 0; // or calculate
-    const tax = 0;
-    const total = subtotal + shipping_fee + tax;
-
-    const paymentInit = await initializePaystackPayment(data.email, total);
-
-    const order = await OrderModel.create({
-      id: uuidv4(),
-      buyer_id: data.buyer_id,
-      vendor_id: data.vendor_id,
-      store_id: data.store_id,
-      order_items: validatedItems,
-      subtotal,
-      shipping_fee,
-      tax,
-      total,
-      payment_method: "online",
-      payment_reference: paymentInit.reference,
-      payment_url: paymentInit.authorization_url,
-      payment_access_code: paymentInit.access_code,
-      payment_status: "pending",
-      escrow_id: null,
-      status: "pending",
-      created_at: now,
-      updated_at: now,
-    });
-
-    const escrow = await EscrowService.createEscrow({
-      order_id: order.id,
-      buyer_id: data.buyer_id,
-      vendor_id: data.vendor_id,
-      amount: total,
-    });
-
-    await OrderModel.update(order.id, { escrow_id: escrow.id });
-
-    await TransactionModel.create({
-      id: uuidv4(),
-      order_id: order.id,
-      escrow_id: escrow.id,
-      user_id: data.buyer_id,
-      vendor_id: data.vendor_id,
-      store_id: data.store_id,
-      type: "payment_init",
-      amount: total,
-      currency: "NGN",
-      reference: paymentInit.reference,
-      status: "pending",
-      description: "Payment initialized via Paystack",
-      metadata: paymentInit,
-      created_at: now,
-      updated_at: now,
-    });
-
-    // ─────────────────────────────────────────────────────
-    // SEND EMAILS (Order created notifications) — no payment link
-    // ─────────────────────────────────────────────────────
-    try {
-      const buyer = await UserModel.findById(data.buyer_id).catch(() => null);
-      const vendor = await UserModel.findById(data.vendor_id).catch(() => null);
-
-      if (buyer?.email) {
-        await OrderMailService.sendOrderCreated({
-          email: buyer.email,
-          name: buyer.first_name,
-          order,
-        });
-      }
-
-      if (vendor?.email) {
-        await OrderMailService.sendVendorNewOrder({
-          email: vendor.email,
-          name: vendor.first_name ?? vendor.store_name ?? "Vendor",
-          order,
-        });
-      }
-    } catch (err) {
-      console.error("Order-with-paystack email error:", err);
+    // Group items by vendor
+    const groups: Record<string, ICartItem[]> = {};
+    for (const item of validatedItems) {
+      const product = await ProductModel.findById(item.product_id);
+      if (!groups[product.vendor_id]) groups[product.vendor_id] = [];
+      groups[product.vendor_id].push(item);
     }
 
-    return { order, paymentUrl: paymentInit.authorization_url };
+    const successfulOrders: Array<{ order: IOrder; paymentUrl: string }> = [];
+    const failedVendors: Array<{ vendor_id: string; error: string }> = [];
+
+    // Loop vendor-by-vendor
+    for (const vendor_id of Object.keys(groups)) {
+      const vendorItems = groups[vendor_id];
+
+      try {
+        // ---------------------------------------------------------
+        // ⭐ CHECK IF VENDOR IS ELIGIBLE FOR ONLINE PAYMENTS
+        // ---------------------------------------------------------
+        await this.validateVendorForOnline(vendor_id);
+
+        // ---------------------------------------------------------
+        // ⭐ BUILD ORDER PRICE DETAILS
+        // ---------------------------------------------------------
+        let subtotal = 0;
+        for (const item of vendorItems) {
+          subtotal += (item.discount_price ?? item.price) * item.quantity;
+        }
+
+        const shipping_fee = 0;
+        const tax = 0;
+        const total = subtotal + shipping_fee + tax;
+
+        // ---------------------------------------------------------
+        // ⭐ INITIALIZE PAYSTACK FOR THIS VENDOR
+        // ---------------------------------------------------------
+        const paymentInit = await initializePaystackPayment(data.email, total);
+
+        const order = await OrderModel.create({
+          id: uuidv4(),
+          buyer_id: data.buyer_id,
+          vendor_id,
+          order_items: vendorItems,
+          subtotal,
+          shipping_fee,
+          tax,
+          total,
+          payment_method: "online",
+          payment_reference: paymentInit.reference,
+          payment_url: paymentInit.authorization_url,
+          payment_access_code: paymentInit.access_code,
+          payment_status: "pending",
+          escrow_id: null,
+          status: "pending",
+          notes: null,
+          created_at: now,
+          updated_at: now,
+        });
+
+        // Create escrow
+        const escrow = await EscrowService.createEscrow({
+          order_id: order.id,
+          buyer_id: data.buyer_id,
+          vendor_id,
+          amount: total,
+        });
+
+        await OrderModel.update(order.id, { escrow_id: escrow.id });
+
+        successfulOrders.push({
+          order,
+          paymentUrl: paymentInit.authorization_url,
+        });
+      } catch (err: any) {
+        console.error(`Vendor ${vendor_id} failed: `, err.message);
+
+        failedVendors.push({
+          vendor_id,
+          error: err.message || "Unknown error",
+        });
+
+        continue; // continue to next vendor group
+      }
+    }
+
+    return {
+      success: true,
+      successfulOrders,
+      failedVendors,
+    };
   }
 
   /* -------------------------------------------------------------------------- */
-  /*                      🟢 4. VERIFY PAYSTACK PAYMENT                          */
+  /* 🔥 4. VERIFY PAYSTACK PAYMENT                                              */
   /* -------------------------------------------------------------------------- */
   static async verifyPayment(reference: string) {
     const order = await OrderModel.findOne({ payment_reference: reference });
     if (!order) throw new NotFoundError("Order not found");
 
-    // 1️⃣ IDEMPOTENCY USING STATUS
     if (order.payment_status === "success") {
       return {
         success: true,
@@ -353,34 +525,27 @@ export class OrderService {
       throw new BadRequestError("Payment verification failed");
 
     const amountPaid = paymentData.amount / 100;
-    if (amountPaid !== order.total) {
-      throw new BadRequestError(
-        `Amount mismatch: Paid ${amountPaid} vs expected ${order.total}`
-      );
+
+    if (Number(amountPaid) !== Number(order.total)) {
+      throw new BadRequestError("Amount mismatch");
     }
 
     const now = new Date().toISOString();
 
-    // 2️⃣ UPDATE STATUS ONCE
     const updatedOrder = await OrderModel.update(order.id, {
       status: "paid",
       payment_status: "success",
       updated_at: now,
     });
 
-    // 3️⃣ FUND ESCROW (also idempotent)
-    await EscrowService.fundEscrow(order.id);
+    await EscrowService.fundEscrow(updatedOrder.escrow_id!);
 
-    // 4️⃣ START DELIVERY (also idempotent)
     await DeliveryService.createDelivery({
       order_id: order.id,
       buyer_id: order.buyer_id,
       vendor_id: order.vendor_id,
     });
 
-    // ─────────────────────────────────────────────────────
-    // SEND EMAILS: Payment verified (buyer + vendor)
-    // ─────────────────────────────────────────────────────
     try {
       const buyer = await UserModel.findById(order.buyer_id).catch(() => null);
       const vendor = await UserModel.findById(order.vendor_id).catch(
@@ -408,14 +573,21 @@ export class OrderService {
 
     return {
       success: true,
-      idempotent: false,
       message: "Payment verified",
       order: updatedOrder,
     };
   }
 
+  /* -------------------------------------------------------------------------- */
+  /* 🔥 5. HANDLE PAYSTACK WEBHOOK                                              */
+  /* -------------------------------------------------------------------------- */
   static async handlePaystackWebhook(data: any): Promise<void> {
     const reference = data.reference;
+
+    if (!reference) {
+      console.error("Webhook missing reference");
+      return;
+    }
 
     const order = await OrderModel.findOne({ payment_reference: reference });
 
@@ -424,24 +596,17 @@ export class OrderService {
       return;
     }
 
-    // Idempotency
     if (order.payment_status === "success") {
-      console.log("Duplicate webhook — already processed:", reference);
+      console.log("Duplicate webhook — already processed.");
       return;
     }
 
-    /* ------------------------------------------------------------------
-     * 🔐 SECURITY: Validate amount paid from Paystack webhook
-     * ------------------------------------------------------------------*/
-    const amountPaid = Number(data.amount) / 100; // Paystack amount is in kobo
-    const expected = Number(order.total);
-
-    if (amountPaid !== expected) {
+    const amountPaid = Number(data.amount) / 100;
+    if (amountPaid !== order.total) {
       console.error(
-        `SECURITY ALERT: Amount mismatch in webhook for order ${order.id}.
-        Paid: ${amountPaid} | Expected: ${expected}`
+        `SECURITY ALERT: Webhook mismatch. Paid ${amountPaid}, expected ${order.total}`
       );
-      return; // ❌ STOP — do NOT mark order paid or fund escrow
+      return;
     }
 
     const now = new Date().toISOString();
@@ -466,19 +631,17 @@ export class OrderService {
       escrow_id: order.escrow_id,
       user_id: order.buyer_id,
       vendor_id: order.vendor_id,
-      store_id: order.store_id,
       type: "payment_webhook",
       amount: order.total,
       currency: "NGN",
       reference,
       status: "success",
-      description: "Payment confirmed by Paystack webhook",
+      description: "Payment confirmed by webhook",
       metadata: data,
       created_at: now,
       updated_at: now,
     });
 
-    // EMAILS
     try {
       const buyer = await UserModel.findById(order.buyer_id).catch(() => null);
       const vendor = await UserModel.findById(order.vendor_id).catch(
@@ -501,14 +664,14 @@ export class OrderService {
         });
       }
     } catch (err) {
-      console.error("Webhook payment email error:", err);
+      console.error("Webhook email error:", err);
     }
 
-    console.log("Webhook payment confirmed for order:", order.id);
+    console.log("Webhook completed for order:", order.id);
   }
 
   /* -------------------------------------------------------------------------- */
-  /*                             📦 5. GET ORDERS                                */
+  /* 6. GET ORDERS                                                              */
   /* -------------------------------------------------------------------------- */
   static async getOrder(id: string): Promise<IOrder> {
     const order = await OrderModel.findById(id);
@@ -527,7 +690,7 @@ export class OrderService {
   }
 
   /* -------------------------------------------------------------------------- */
-  /*                      🔄 6. UPDATE ORDER STATUS (Vendor)                    */
+  /* 7. UPDATE ORDER STATUS                                                     */
   /* -------------------------------------------------------------------------- */
   static async updateOrderStatus(id: string, status: OrderStatus) {
     const order = await OrderModel.findById(id);
@@ -556,11 +719,9 @@ export class OrderService {
       await EscrowService.markDelivered(order.id);
     }
 
-    // ─────────────────────────────────────────────────────
-    // SEND EMAIL: order status update to buyer
-    // ─────────────────────────────────────────────────────
     try {
       const buyer = await UserModel.findById(order.buyer_id).catch(() => null);
+
       if (buyer?.email) {
         await OrderMailService.sendOrderStatusUpdate({
           email: buyer.email,
@@ -570,31 +731,32 @@ export class OrderService {
         });
       }
     } catch (err) {
-      console.error("Order status email error:", err);
+      console.error("Status update email error:", err);
     }
 
     return updated;
   }
 
   /* -------------------------------------------------------------------------- */
-  /*                ❌ 7. CANCEL ORDER (refund online orders only)              */
+  /* 8. CANCEL ORDER                                                             */
   /* -------------------------------------------------------------------------- */
   static async cancelOrder(id: string, requestedBy: string) {
     const order = await OrderModel.findById(id);
     if (!order) throw new NotFoundError("Order not found");
 
-    /* -------------------------------------------------------------------------- */
-    /*                                1. SECURITY CHECKS                           */
-    /* -------------------------------------------------------------------------- */
+    // Ensure ONLY buyer or vendor is allowed
+    if (requestedBy !== order.buyer_id && requestedBy !== order.vendor_id) {
+      throw new BadRequestError(
+        "Only the buyer or vendor can cancel this order"
+      );
+    }
 
-    // Delivered or completed orders cannot be canceled
     if (order.status === "delivered" || order.status === "completed") {
       throw new BadRequestError(
         "Delivered or completed orders cannot be canceled"
       );
     }
 
-    // Already canceled? Idempotent return
     if (order.status === "canceled") {
       return {
         success: true,
@@ -605,53 +767,46 @@ export class OrderService {
 
     const now = new Date().toISOString();
 
-    /* -------------------------------------------------------------------------- */
-    /*                                 2. CANCEL ORDER                             */
-    /* -------------------------------------------------------------------------- */
     await OrderModel.update(id, {
       status: "canceled",
       updated_at: now,
     });
 
-    /* -------------------------------------------------------------------------- */
-    /*                        3. REFUND ESCROW IF ONLINE PAYMENT                   */
-    /* -------------------------------------------------------------------------- */
-
+    // Refund if online
     if (order.escrow_id && order.payment_method === "online") {
       try {
         await EscrowService.refundEscrow(order.escrow_id, requestedBy);
       } catch (err) {
-        console.error("Refund error in cancelOrder:", err);
-        // We DO NOT throw here → order is still canceled.
-        // Refund will retry via dashboard/manual if needed.
+        console.error("Refund error:", err);
       }
     }
 
-    /* -------------------------------------------------------------------------- */
-    /*                            4. LOG TRANSACTION (CANCELED)                   */
-    /* -------------------------------------------------------------------------- */
+    // Log transaction
     await TransactionModel.create({
       id: uuidv4(),
       order_id: order.id,
       escrow_id: order.escrow_id,
       user_id: order.buyer_id,
       vendor_id: order.vendor_id,
-      store_id: order.store_id,
       type: "order_canceled",
       amount: order.total,
       currency: "NGN",
       status: "success",
-      description: "Order canceled by user",
+      description: "Order canceled",
       metadata: null,
       created_at: now,
       updated_at: now,
     });
 
-    /* -------------------------------------------------------------------------- */
-    /*                              5. SEND EMAIL TO BUYER                         */
-    /* -------------------------------------------------------------------------- */
+    /* --------------------------------------------------------------------------
+     ✉️ SEND EMAILS TO BOTH BUYER & VENDOR
+  -------------------------------------------------------------------------- */
     try {
       const buyer = await UserModel.findById(order.buyer_id).catch(() => null);
+      const vendor = await UserModel.findById(order.vendor_id).catch(
+        () => null
+      );
+
       if (buyer?.email) {
         await OrderMailService.sendOrderCanceled({
           email: buyer.email,
@@ -659,11 +814,17 @@ export class OrderService {
           order,
         });
       }
-    } catch (err) {
-      console.error("Order canceled email error:", err);
-    }
 
-    /* -------------------------------------------------------------------------- */
+      if (vendor?.email) {
+        await OrderMailService.sendOrderCanceled({
+          email: vendor.email,
+          name: vendor.first_name ?? vendor.store_name ?? "Vendor",
+          order,
+        });
+      }
+    } catch (err) {
+      console.error("Cancel email error:", err);
+    }
 
     return {
       success: true,

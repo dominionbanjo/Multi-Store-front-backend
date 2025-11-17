@@ -12,8 +12,8 @@ export type TransactionType =
   | "payment_init"
   | "payment_confirmed"
   | "order_canceled"
-  | "payment_webhook";
-
+  | "payment_webhook"
+  | "offline_fulfillment";
 export type TransactionStatus = "pending" | "success" | "failed" | "reversed";
 
 export interface ITransaction {
@@ -22,7 +22,6 @@ export interface ITransaction {
   escrow_id: string | null;
   user_id: string | null;
   vendor_id: string | null;
-  store_id: string | null;
 
   type: TransactionType;
   amount: number;
@@ -75,13 +74,13 @@ class TransactionModelClass extends BaseModel<ITransaction> {
       index: true,
     },
 
-    store_id: {
-      type: "UUID",
-      references: "stores(id)",
-      onDelete: "SET NULL",
-      onUpdate: "CASCADE",
-      index: true,
-    },
+    // store_id: {
+    //   type: "UUID",
+    //   references: "stores(id)",
+    //   onDelete: "SET NULL",
+    //   onUpdate: "CASCADE",
+    //   index: true,
+    // },
 
     type: { type: "VARCHAR(50)", notNull: true, index: true },
 

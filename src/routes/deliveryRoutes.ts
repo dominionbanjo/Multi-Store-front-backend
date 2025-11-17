@@ -1,0 +1,29 @@
+import express from "express";
+import {
+  createDelivery,
+  getDelivery,
+  updateDeliveryStatus,
+  assignCourier,
+  confirmDelivery,
+  uploadProof,
+} from "../controllers/deliveryController.js";
+import { authenticateUser } from "../middlewares/authMiddleware.js";
+
+const router = express.Router();
+
+/**
+ * DELIVERY ROUTES
+ * Base path: /api/v1/deliveries
+ */
+
+// Require authentication for ALL delivery routes
+router.use(authenticateUser);
+
+router.post("/", createDelivery);
+router.get("/:id", getDelivery);
+router.patch("/:id/status", updateDeliveryStatus);
+router.patch("/:id/assign", assignCourier);
+router.patch("/confirm/:orderId", confirmDelivery);
+router.patch("/:id/proof", uploadProof);
+
+export default router;

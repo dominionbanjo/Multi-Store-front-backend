@@ -23,7 +23,6 @@ export interface IOrder {
   id: string;
   buyer_id: string;
   vendor_id: string;
-  store_id: string | null;
   escrow_id: string | null;
   delivery_id: string | null;
 
@@ -69,13 +68,6 @@ class OrderModelClass extends BaseModel<IOrder> {
       onUpdate: "CASCADE",
     },
 
-    store_id: {
-      type: "UUID",
-      references: "stores(id)",
-      onDelete: "SET NULL",
-      onUpdate: "CASCADE",
-    },
-
     escrow_id: {
       type: "UUID",
       references: "escrows(id)",
@@ -106,9 +98,10 @@ class OrderModelClass extends BaseModel<IOrder> {
     payment_access_code: { type: "VARCHAR(255)" },
 
     payment_status: {
-      type: "VARCHAR(50) CHECK (payment_status IN ('paid','unpaid'))",
+      type: "VARCHAR(50) CHECK (payment_status IN ('pending','success','failed','canceled','refunded','paid','unpaid'))",
       default: "'unpaid'",
     },
+
     status: {
       type: "VARCHAR(50)",
       notNull: true,
@@ -117,6 +110,7 @@ class OrderModelClass extends BaseModel<IOrder> {
     },
 
     notes: { type: "TEXT" },
+
     order_items: {
       type: "JSONB",
       notNull: true,

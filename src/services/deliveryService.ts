@@ -36,8 +36,15 @@ export class DeliveryService {
     if (!order_id || !buyer_id || !vendor_id)
       throw new BadRequestError("Missing required delivery fields");
 
+    // If delivery already exists, return it — idempotent
     const existing = await DeliveryModel.findOne({ order_id });
     if (existing) return existing;
+
+    // 🔥 Fetch buyer address (NEW)
+    const buyer = await UserModel.findById(buyer_id);
+    if (!buyer) throw new BadRequestError("Buyer not found");
+
+    const addr = buyer.address || {}; // fallback empty object
 
     const now = new Date().toISOString();
 
@@ -47,11 +54,14 @@ export class DeliveryService {
       buyer_id,
       vendor_id,
       courier_id: data.courier_id || null,
-      address: data.address || null,
-      city: data.city || null,
-      state: data.state || null,
-      country: data.country || null,
-      postal_code: data.postal_code || null,
+
+      // 🏠 Automatically pull from buyer.address
+      address: data.address ?? addr.street ?? null,
+      city: data.city ?? addr.city ?? null,
+      state: data.state ?? addr.state ?? null,
+      country: data.country ?? addr.country ?? null,
+      postal_code: data.postal_code ?? addr.postal_code ?? null,
+
       tracking_number: data.tracking_number || null,
       estimated_delivery: data.estimated_delivery || null,
       delivery_status: "pending",
@@ -59,7 +69,6 @@ export class DeliveryService {
       updated_at: now,
     });
 
-    const buyer = await UserModel.findById(buyer_id);
     const vendor = await UserModel.findById(vendor_id);
 
     if (buyer?.email) {

@@ -224,7 +224,7 @@ export class EscrowService {
     }
 
     /* --------------------------- 7. Fetch Store ------------------------------- */
-    const store = await StoreModel.findById(order.store_id!);
+    const store = await StoreModel.findById(order.vendor_id!);
     if (!store) throw new NotFoundError("Store not found");
 
     if (!store.recipient_code)

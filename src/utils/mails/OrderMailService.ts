@@ -1,10 +1,20 @@
 import { sendEmail } from "./sendEmail.js";
 
+interface OrderMailPayload {
+  email: string;
+  name: string;
+  order: {
+    id: string;
+    status: string;
+    total: number;
+  };
+}
+
 export class OrderMailService {
   /* ----------------------------------------------------
      COMMON TEMPLATE WRAPPER
   ---------------------------------------------------- */
-  private static wrapTemplate(title: string, content: string) {
+  private static wrapTemplate(title: string, content: string): string {
     return `
       <div style="font-family: Arial; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
         <h2 style="text-align:center; color:#333;">${title}</h2>
@@ -19,12 +29,14 @@ export class OrderMailService {
   /* ----------------------------------------------------
      1) ORDER CREATED (Buyer)
   ---------------------------------------------------- */
-  static async sendOrderCreated({ email, name, order }: any) {
+  static async sendOrderCreated(payload: OrderMailPayload): Promise<void> {
+    const { email, name, order } = payload;
+
     const content = `
       <p>Hi <b>${name}</b>,</p>
       <p>Your order <b>#${order.id}</b> has been created successfully.</p>
       <p>Status: <b>${order.status}</b></p>
-      <p>Total: <b>₦${order.total_amount}</b></p>
+      <p>Total: <b>₦${order.total}</b></p>
     `;
 
     await sendEmail({
@@ -37,11 +49,13 @@ export class OrderMailService {
   /* ----------------------------------------------------
      2) ORDER CREATED (Vendor Alert)
   ---------------------------------------------------- */
-  static async sendVendorNewOrder({ email, name, order }: any) {
+  static async sendVendorNewOrder(payload: OrderMailPayload): Promise<void> {
+    const { email, name, order } = payload;
+
     const content = `
       <p>Hello <b>${name}</b>,</p>
       <p>You received a new order <b>#${order.id}</b> from a customer.</p>
-      <p>Total: <b>₦${order.total_amount}</b></p>
+      <p>Total: <b>₦${order.total}</b></p>
     `;
 
     await sendEmail({
@@ -52,9 +66,13 @@ export class OrderMailService {
   }
 
   /* ----------------------------------------------------
-     3) PAYMENT INITIALIZED (NO LINKS SENT)
+     3) PAYMENT INITIALIZED
   ---------------------------------------------------- */
-  static async sendPaymentInitialized({ email, name, order }: any) {
+  static async sendPaymentInitialized(
+    payload: OrderMailPayload
+  ): Promise<void> {
+    const { email, name, order } = payload;
+
     const content = `
       <p>Hi <b>${name}</b>,</p>
       <p>Your payment process for order <b>#${order.id}</b> has been initialized.</p>
@@ -71,7 +89,9 @@ export class OrderMailService {
   /* ----------------------------------------------------
      4) PAYMENT VERIFIED (Buyer)
   ---------------------------------------------------- */
-  static async sendPaymentVerified({ email, name, order }: any) {
+  static async sendPaymentVerified(payload: OrderMailPayload): Promise<void> {
+    const { email, name, order } = payload;
+
     const content = `
       <p>Hi <b>${name}</b>,</p>
       <p>Your payment for order <b>#${order.id}</b> has been confirmed.</p>
@@ -88,7 +108,11 @@ export class OrderMailService {
   /* ----------------------------------------------------
      5) PAYMENT VERIFIED (Vendor)
   ---------------------------------------------------- */
-  static async sendVendorPaymentVerified({ email, name, order }: any) {
+  static async sendVendorPaymentVerified(
+    payload: OrderMailPayload
+  ): Promise<void> {
+    const { email, name, order } = payload;
+
     const content = `
       <p>Hello <b>${name}</b>,</p>
       <p>Payment for order <b>#${order.id}</b> has been confirmed.</p>
@@ -105,7 +129,11 @@ export class OrderMailService {
   /* ----------------------------------------------------
      6) ORDER STATUS UPDATED
   ---------------------------------------------------- */
-  static async sendOrderStatusUpdate({ email, name, order, status }: any) {
+  static async sendOrderStatusUpdate(
+    payload: OrderMailPayload & { status: string }
+  ): Promise<void> {
+    const { email, name, order, status } = payload;
+
     const content = `
       <p>Hi <b>${name}</b>,</p>
       <p>Your order <b>#${order.id}</b> status has been updated to:</p>
@@ -122,7 +150,9 @@ export class OrderMailService {
   /* ----------------------------------------------------
      7) ORDER CANCELED
   ---------------------------------------------------- */
-  static async sendOrderCanceled({ email, name, order }: any) {
+  static async sendOrderCanceled(payload: OrderMailPayload): Promise<void> {
+    const { email, name, order } = payload;
+
     const content = `
       <p>Hi <b>${name}</b>,</p>
       <p>Your order <b>#${order.id}</b> has been cancelled.</p>

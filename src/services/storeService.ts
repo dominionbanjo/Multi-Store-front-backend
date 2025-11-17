@@ -485,6 +485,7 @@ class StoreService {
       bank_name: verified.bank_name || verified.account_name,
       recipient_code,
       settlement_email: settlement_email || store.settlement_email,
+      payout_verified: true,
       updated_at: new Date().toISOString(),
     });
 
@@ -565,6 +566,7 @@ class StoreService {
       bank_code: bank_code || store.bank_code,
       bank_name,
       recipient_code,
+      payout_verified: true,
       settlement_email: settlement_email || store.settlement_email,
       updated_at: new Date().toISOString(),
     });
@@ -589,6 +591,7 @@ class StoreService {
       bank_name: null,
       recipient_code: null,
       settlement_email: null,
+      payout_verified: false,
       updated_at: new Date().toISOString(),
     });
 

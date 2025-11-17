@@ -22,6 +22,7 @@ import storeRouter from "./routes/storeRoutes.js";
 import userRouter from "./routes/userRoutes.js";
 import wishlistRouter from "./routes/wishlistRoutes.js";
 import productCategoryRouter from "./routes/productCategoryRoutes.js";
+import deliveryRouter from "./routes/deliveryRoutes.js";
 
 // Middlewares
 import errorHandlerMiddleWare from "./middlewares/errorHandlerMiddleWare.js";
@@ -70,6 +71,7 @@ app.use("/api/v1/review", reviewRouter);
 app.use("/api/v1/store", storeRouter);
 app.use("/api/v1/wishlist", wishlistRouter);
 app.use("/api/v1/product-categories", productCategoryRouter);
+app.use("/api/v1/delivery", deliveryRouter);
 app.use("/webhook/paystack", paystackWebhookRoute);
 
 // ───────────────────────────────────────────────
@@ -103,7 +105,7 @@ const port = process.env.PORT || 5300;
 
 try {
   console.log("🔄 Syncing database models...");
-  await syncAllModels();
+  // await syncAllModels();
   console.log("✅ All models synced successfully");
 
   app.listen(port, () => {

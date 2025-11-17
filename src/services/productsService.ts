@@ -213,6 +213,8 @@ class ProductService {
     const store = await StoreModel.findOne({ id: data.store_id });
     if (!store) throw new NotFoundError("Store not found");
 
+    data.category = data.category.trim();
+
     await this.validateCategory(data.category);
     await this.validateColors(data.colors);
 

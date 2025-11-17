@@ -76,7 +76,6 @@ class PayoutService {
       order_id,
       escrow_id,
       vendor_id: null,
-      store_id: null,
       user_id: null,
       type: "payout",
       amount,
