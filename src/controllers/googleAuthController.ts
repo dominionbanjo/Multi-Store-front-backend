@@ -15,6 +15,7 @@ export const continueWithGoogle = async (req: Request, res: Response) => {
       userId: user.id,
       name: user.first_name,
       role: user.account_type,
+      tokenVersion: user.token_version,
     });
 
     res.status(StatusCodes.OK).json({
