@@ -604,35 +604,47 @@ export class OrderService {
       return;
     }
 
+    // Prevent double-processing
     if (order.payment_status === "success") {
       console.log("Duplicate webhook — already processed.");
       return;
     }
 
+    // ⭐ FIX: Proper amount validation
     const amountPaid = Number(data.amount) / 100;
-    if (amountPaid !== order.total) {
+    const expectedAmount = Number(order.total);
+
+    if (amountPaid !== expectedAmount) {
       console.error(
-        `SECURITY ALERT: Webhook mismatch. Paid ${amountPaid}, expected ${order.total}`
+        `SECURITY ALERT: Webhook mismatch. Paid ${amountPaid}, expected ${expectedAmount}`
       );
       return;
     }
 
     const now = new Date().toISOString();
 
+    // ⭐ Update order to PAID
     await OrderModel.update(order.id, {
       status: "paid",
       payment_status: "success",
       updated_at: now,
     });
 
-    await EscrowService.fundEscrow(order.id);
+    // ⭐ FIX: fund escrow with correct escrow ID (NOT order.id)
+    if (order.escrow_id) {
+      await EscrowService.fundEscrow(order.escrow_id);
+    } else {
+      console.error("Webhook: Order has no escrow_id to fund!");
+    }
 
+    // Create delivery
     await DeliveryService.createDelivery({
       order_id: order.id,
       buyer_id: order.buyer_id,
       vendor_id: order.vendor_id,
     });
 
+    // Log transaction
     await TransactionModel.create({
       id: uuidv4(),
       order_id: order.id,
@@ -640,7 +652,7 @@ export class OrderService {
       user_id: order.buyer_id,
       vendor_id: order.vendor_id,
       type: "payment_webhook",
-      amount: order.total,
+      amount: expectedAmount,
       currency: "NGN",
       reference,
       status: "success",
@@ -650,6 +662,7 @@ export class OrderService {
       updated_at: now,
     });
 
+    // Send email notifications
     try {
       const buyer = await UserModel.findById(order.buyer_id).catch(() => null);
       const vendor = await UserModel.findById(order.vendor_id).catch(
