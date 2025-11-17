@@ -126,6 +126,7 @@ class Accounts {
       phone_number: phone_number ?? null,
       email,
       password: hash,
+      token_version: 0,
       account_type: account_type as "user" | "vendor",
       store_id: null,
       store_name: null,
@@ -202,6 +203,7 @@ class Accounts {
       email_verified: false,
       signup_medium: "signed",
       created_at: now,
+      token_version: 0,
     };
   }
 

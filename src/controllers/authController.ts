@@ -5,6 +5,7 @@ import { createJWT } from "../utils/auth/tokenUtil.js";
 import { BadRequestError } from "../utils/errors/customError.js";
 import { StoreModel } from "../config/db/models/StoreModel.js";
 import { v4 as uuidv4 } from "uuid";
+import { UserModel } from "../config/db/models/index.js";
 
 /**
  * 🧩 Register new user
@@ -63,6 +64,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     userId: user.id,
     name: user.first_name,
     role: user.account_type,
+    tokenVersion: user.token_version,
   });
 
   res.status(StatusCodes.CREATED).json({
@@ -87,6 +89,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     userId: user.id,
     name: user.first_name,
     role: user.account_type,
+    tokenVersion: user.token_version,
   });
 
   res.status(StatusCodes.OK).json({
@@ -167,5 +170,32 @@ export const resetPassword = async (
     status: 1,
     success: true,
     message: result.msg,
+  });
+};
+
+export const logout = async (req: Request, res: Response): Promise<void> => {
+  const userId = (req as any).user?.userId;
+
+  if (!userId) {
+    throw new BadRequestError("Not logged in");
+  }
+
+  // fetch user
+  const user = await UserModel.findOne({ id: userId });
+
+  if (!user) {
+    throw new BadRequestError("User not found");
+  }
+
+  // update with real number
+  await UserModel.update(userId, {
+    token_version: user.token_version + 1,
+    updated_at: new Date().toISOString(),
+  });
+
+  res.status(StatusCodes.OK).json({
+    status: 1,
+    success: true,
+    message: "Logged out successfully",
   });
 };

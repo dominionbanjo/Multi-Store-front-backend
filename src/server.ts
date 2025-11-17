@@ -27,8 +27,7 @@ import deliveryRouter from "./routes/deliveryRoutes.js";
 // Middlewares
 import errorHandlerMiddleWare from "./middlewares/errorHandlerMiddleWare.js";
 
-// ✅ Import DB sync utility
-// import { syncAllModels } from "./utils/db/sync.js";
+// Webhook router
 import paystackWebhookRoute from "./routes/paystackWebhookRoute.js";
 
 // CLOUDINARY CONFIG
@@ -52,10 +51,19 @@ app.use(configureCors());
 app.use(configureRateLimit());
 
 // ───────────────────────────────────────────────
-// 🧰 CORE MIDDLEWARE
+// 🧰 PAYSTACK WEBHOOK (RAW BODY ONLY FOR THIS ROUTE)
+// MUST BE BEFORE express.json()
+// MUST BE MOUNTED EXACTLY ONCE
 // ───────────────────────────────────────────────
-app.use("/webhook/paystack", express.raw({ type: "application/json" }));
+app.use(
+  "/webhook/paystack",
+  express.raw({ type: "application/json" }),
+  paystackWebhookRoute
+);
 
+// ───────────────────────────────────────────────
+// 🧰 JSON PARSER FOR ALL OTHER ROUTES
+// ───────────────────────────────────────────────
 app.use(express.json());
 app.use(morgan("dev"));
 
@@ -72,49 +80,32 @@ app.use("/api/v1/store", storeRouter);
 app.use("/api/v1/wishlist", wishlistRouter);
 app.use("/api/v1/product-categories", productCategoryRouter);
 app.use("/api/v1/delivery", deliveryRouter);
-app.use("/webhook/paystack", paystackWebhookRoute);
 
 // ───────────────────────────────────────────────
-// 📘 STATIC API DOCS (Generated index.html)
+// 📘 STATIC API DOCS
 // ───────────────────────────────────────────────
 const docsPath = path.join(process.cwd(), "public/docs");
-
-// Serve the folder (so CSS/JS work)
 app.use("/api-docs", express.static(docsPath));
 
-// Serve index.html at the root
 app.get("/", (_req, res) => {
   res.sendFile(path.join(docsPath, "index.html"));
 });
-// ───────────────────────────────────────────────
-// 🧪 TEST ROUTE
-// ───────────────────────────────────────────────
+
+// TEST ROUTE
 app.get("/test", async (_req, res) => {
   res.json({ message: "Server running" });
 });
 
-// ───────────────────────────────────────────────
-// ⚠️ GLOBAL ERROR HANDLER
-// ───────────────────────────────────────────────
+// GLOBAL ERROR HANDLER
 app.use(errorHandlerMiddleWare);
 
-// ───────────────────────────────────────────────
-// 🚀 SERVER START WITH DB SYNC
-// ───────────────────────────────────────────────
+// SERVER START
 const port = process.env.PORT || 5300;
 
-try {
-  console.log("🔄 Syncing database models...");
-  // await syncAllModels();
-  console.log("✅ All models synced successfully");
+app.listen(port, () => {
+  const url = `http://localhost:${port}`;
+  console.log(`🚀 Server listening on port ${port}`);
+  console.log(`📘 API Docs available at: ${url}/api-docs`);
+});
 
-  app.listen(port, () => {
-    const url = `http://localhost:${port}`;
-    console.log(`🚀 Server listening on port ${port}`);
-    console.log(`👉 Press Ctrl + Click to open: ${url}`);
-    console.log(`📘 API Docs available at: ${url}/api-docs`);
-  });
-} catch (error) {
-  console.error("❌ Failed to start server:", error);
-  process.exit(1);
-}
+export default app;

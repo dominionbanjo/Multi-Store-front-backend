@@ -4,6 +4,7 @@ import {
   UnauthorizedError,
 } from "../utils/errors/customError.js";
 import { verifyJWT } from "../utils/auth/tokenUtil.js";
+import { UserModel } from "../config/db/models/UserModel.js";
 
 interface CustomRequest extends Request {
   user?: {
@@ -13,11 +14,11 @@ interface CustomRequest extends Request {
   };
 }
 
-export const authenticateUser = (
+export const authenticateUser = async (
   req: CustomRequest,
   _res: Response,
   next: NextFunction
-): void => {
+): Promise<void> => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -27,11 +28,33 @@ export const authenticateUser = (
   const token = authHeader.split(" ")[1];
 
   try {
-    const { userId, name, role } = verifyJWT(token);
+    // Decode JWT (now includes tokenVersion)
+    const decoded = verifyJWT(token);
+
+    const { userId, name, role, tokenVersion } = decoded as {
+      userId: string;
+      name: string;
+      role: string;
+      tokenVersion: number;
+    };
+
+    // Fetch the user from DB for version comparison
+    const user = await UserModel.findOne({ id: userId });
+    if (!user) {
+      throw new UnauthenticatedError("User no longer exists");
+    }
+
+    // IMPORTANT: Compare token versions
+    if (user.token_version !== tokenVersion) {
+      throw new UnauthenticatedError("Token expired — please login again");
+    }
+
+    // Attach to request
     req.user = { userId, name, role };
+
     next();
-  } catch {
-    throw new UnauthenticatedError("Authentication invalid — invalid token");
+  } catch (err) {
+    throw new UnauthenticatedError("Authentication invalid");
   }
 };
 
