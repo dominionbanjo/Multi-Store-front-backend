@@ -1,32 +1,38 @@
 import { BaseModel, SchemaDefinition } from "../helpers/BaseModel.js";
 
 export type TransactionType =
-  | "payment" // buyer → platform
-  | "escrow_hold" // platform holds for vendor
-  | "payout" // platform → vendor
-  | "refund" // platform → buyer
-  | "fee"; // platform commission or charge;
+  | "payment"
+  | "escrow_hold"
+  | "payout"
+  | "refund"
+  | "fee"
+  | "offline_payment"
+  | "order_created"
+  | "payment_offline"
+  | "payment_init"
+  | "payment_confirmed"
+  | "order_canceled"
+  | "payment_webhook"
+  | "offline_fulfillment";
 
 export type TransactionStatus = "pending" | "success" | "failed" | "reversed";
 
-/**
- * Represents a single financial movement.
- * Can be linked to an order, escrow, vendor, or buyer.
- */
 export interface ITransaction {
   id: string;
   order_id: string | null;
   escrow_id: string | null;
-  user_id: string | null; // who initiated it
-  vendor_id: string | null; // receiver (if payout)
-  store_id: string | null; // vendor store (optional)
+  user_id: string | null;
+  vendor_id: string | null;
+
   type: TransactionType;
   amount: number;
-  currency: string | null; // "NGN", "USD", etc
-  reference: string | null; // Paystack reference or internal ref
+  currency: string | null;
+  reference: string | null;
   description: string | null;
+
   status: TransactionStatus;
-  metadata: any | null; // JSONB to store full Paystack response or extra data
+  metadata: any | null;
+
   created_at: string | null;
   updated_at: string | null;
 }
@@ -40,9 +46,10 @@ class TransactionModelClass extends BaseModel<ITransaction> {
     order_id: {
       type: "UUID",
       references: "orders(id)",
-      onDelete: "SET NULL",
+      onDelete: "SET NULL", // 🔥 Never remove transactions
       onUpdate: "CASCADE",
       index: true,
+      notNull: false, // Must be nullable since we SET NULL
     },
 
     escrow_id: {
@@ -51,6 +58,7 @@ class TransactionModelClass extends BaseModel<ITransaction> {
       onDelete: "SET NULL",
       onUpdate: "CASCADE",
       index: true,
+      notNull: false,
     },
 
     user_id: {
@@ -59,6 +67,7 @@ class TransactionModelClass extends BaseModel<ITransaction> {
       onDelete: "SET NULL",
       onUpdate: "CASCADE",
       index: true,
+      notNull: false,
     },
 
     vendor_id: {
@@ -67,20 +76,17 @@ class TransactionModelClass extends BaseModel<ITransaction> {
       onDelete: "SET NULL",
       onUpdate: "CASCADE",
       index: true,
-    },
-
-    store_id: {
-      type: "UUID",
-      references: "stores(id)",
-      onDelete: "SET NULL",
-      onUpdate: "CASCADE",
-      index: true,
+      notNull: false,
     },
 
     type: { type: "VARCHAR(50)", notNull: true, index: true },
+
     amount: { type: "NUMERIC(12,2)", notNull: true },
+
     currency: { type: "VARCHAR(10)", default: "'NGN'" },
+
     reference: { type: "VARCHAR(255)" },
+
     description: { type: "TEXT" },
 
     status: {

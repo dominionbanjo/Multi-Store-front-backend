@@ -1,7 +1,18 @@
 import { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import { EscrowService } from "../services/escrowService.js";
-import { BadRequestError } from "../utils/errors/customError.js";
+import {
+  BadRequestError,
+  UnauthenticatedError,
+} from "../utils/errors/customError.js";
+
+interface CustomRequest extends Request {
+  user?: {
+    userId: string;
+    name: string;
+    role: string;
+  };
+}
 
 /** 📄 GET /api/v1/escrow/:id */
 export const getEscrow = async (req: Request, res: Response) => {
@@ -43,14 +54,29 @@ export const markDelivered = async (req: Request, res: Response) => {
 };
 
 /** 🔓 PATCH /api/v1/escrow/release/:orderId */
-export const releaseEscrow = async (req: Request, res: Response) => {
+export const releaseEscrow = async (req: CustomRequest, res: Response) => {
   const { orderId } = req.params;
   const { code } = req.body;
-  if (!code) throw new BadRequestError("Release code is required");
 
-  const result = await EscrowService.releaseEscrow(orderId, code);
+  // Validate required fields
+  if (!orderId) {
+    throw new BadRequestError("Order ID is required");
+  }
 
-  res.status(StatusCodes.OK).json({
+  if (!code) {
+    throw new BadRequestError("Release code is required");
+  }
+
+  // Ensure user is authenticated
+  const userId = req.user?.userId;
+  if (!userId) {
+    throw new BadRequestError("Unauthorized release");
+  }
+
+  // Call service layer
+  const result = await EscrowService.releaseEscrow(orderId, code, userId);
+
+  return res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
     message: result.message,
@@ -58,13 +84,25 @@ export const releaseEscrow = async (req: Request, res: Response) => {
 };
 
 /** 💸 PATCH /api/v1/escrow/:id/refund */
-export const refundEscrow = async (req: Request, res: Response) => {
+export const refundEscrow = async (req: CustomRequest, res: Response) => {
   const { id } = req.params;
-  const result = await EscrowService.refundEscrow(id);
+
+  // must be logged in
+  if (!req.user) {
+    throw new UnauthenticatedError("Please login");
+  }
+
+  const requestedBy = req.user.userId;
+
+  if (!id) throw new BadRequestError("Escrow ID is required");
+
+  const result = await EscrowService.refundEscrow(id, requestedBy);
 
   res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
+    idempotent: result.idempotent ?? false,
     message: result.message,
+    transfer_code: result.transfer_code ?? null,
   });
 };

@@ -3,6 +3,10 @@ import { UserModel, type IUser } from "../config/db/models/UserModel.js";
 import { ProductModel } from "../config/db/models/ProductModel.js";
 import { BadRequestError, NotFoundError } from "../utils/errors/customError.js";
 import UploadService from "./uploadService.js";
+import {
+  createTransferRecipient,
+  verifyBankAccount,
+} from "../utils/payment/paystack.js";
 
 /**
  * 👤 UserService
@@ -216,6 +220,148 @@ class UserService {
     await UserModel.delete(userId);
 
     return { success: true, message: "User deleted successfully" };
+  }
+
+  // ───────────────────────────────────────────────
+  // 🏦 USER: REGISTER BANK ACCOUNT
+  // ───────────────────────────────────────────────
+  static async registerBankAccount(
+    userId: string,
+    bank_code: string,
+    account_number: string,
+    settlement_email?: string
+  ) {
+    if (!userId || !bank_code || !account_number)
+      throw new BadRequestError("Missing required bank details");
+
+    const user = await UserModel.findById(userId);
+    if (!user) throw new NotFoundError("User not found");
+
+    const verified = await verifyBankAccount(account_number, bank_code);
+    if (!verified?.account_name)
+      throw new BadRequestError("Bank account could not be verified");
+
+    // Create Paystack recipient
+    const recipient_code = await createTransferRecipient({
+      name: verified.account_name,
+      account_number,
+      bank_code,
+    });
+
+    const updated = await UserModel.update(userId, {
+      account_number,
+      bank_code,
+      bank_name: verified.bank_name || verified.account_name,
+      recipient_code,
+      payout_verified: true,
+      settlement_email: settlement_email || user.settlement_email,
+      updated_at: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      message: "Bank account registered successfully",
+      user: updated,
+    };
+  }
+
+  // ───────────────────────────────────────────────
+  // 🏦 USER: UPDATE BANK ACCOUNT
+  // ───────────────────────────────────────────────
+  static async updateBankAccount(
+    userId: string,
+    updates: {
+      account_number?: string;
+      bank_code?: string;
+      settlement_email?: string;
+    }
+  ) {
+    if (!userId) throw new BadRequestError("User ID is required");
+
+    const user = await UserModel.findById(userId);
+    if (!user) throw new NotFoundError("User not found");
+
+    const { account_number, bank_code, settlement_email } = updates;
+
+    if (!account_number && !bank_code && !settlement_email) {
+      throw new BadRequestError("No bank details provided for update");
+    }
+
+    let verifiedAccount = null;
+    let recipient_code = user.recipient_code;
+    let bank_name = user.bank_name;
+
+    const bankDetailsChanged =
+      (account_number && account_number !== user.account_number) ||
+      (bank_code && bank_code !== user.bank_code);
+
+    if (bankDetailsChanged) {
+      const acctNum = account_number || user.account_number;
+      const bCode = bank_code || user.bank_code;
+
+      if (!acctNum || !bCode) {
+        throw new BadRequestError(
+          "Both account number and bank code are required for verification"
+        );
+      }
+
+      verifiedAccount = await verifyBankAccount(acctNum, bCode);
+
+      if (!verifiedAccount?.account_name) {
+        throw new BadRequestError("Bank verification failed — invalid details");
+      }
+
+      recipient_code = await createTransferRecipient({
+        name: verifiedAccount.account_name,
+        account_number: acctNum,
+        bank_code: bCode,
+      });
+
+      bank_name = verifiedAccount.bank_name || verifiedAccount.account_name;
+    }
+
+    const updated = await UserModel.update(userId, {
+      account_number: account_number || user.account_number,
+      bank_code: bank_code || user.bank_code,
+      bank_name,
+      recipient_code,
+      settlement_email: settlement_email || user.settlement_email,
+      updated_at: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      message: verifiedAccount
+        ? "Bank verified and updated successfully"
+        : "Settlement email updated successfully",
+      user: updated,
+      verified: verifiedAccount || null,
+    };
+  }
+  // ───────────────────────────────────────────────
+  // 🏦 USER: DELETE BANK ACCOUNT
+  // ───────────────────────────────────────────────
+  static async deleteBankAccount(userId: string) {
+    if (!userId) throw new BadRequestError("User ID is required");
+
+    const user = await UserModel.findById(userId);
+    if (!user) throw new NotFoundError("User not found");
+
+    const cleared = await UserModel.update(userId, {
+      account_number: null,
+      bank_code: null,
+      bank_name: null,
+      recipient_code: null,
+      payout_verified: false,
+      settlement_email: null,
+      updated_at: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      message: "Bank account removed successfully",
+      user: cleared,
+    };
   }
 }
 

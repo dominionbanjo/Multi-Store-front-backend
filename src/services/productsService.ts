@@ -171,6 +171,7 @@ class ProductService {
     data: Omit<IProduct, "id" | "created_at" | "updated_at">,
     files?: { image?: Express.Multer.File[]; gallery?: Express.Multer.File[] }
   ) {
+    data.category = data.category.trim();
     await this.validateCategory(data.category);
     await this.validateColors(data.colors);
 
@@ -212,6 +213,8 @@ class ProductService {
     const store = await StoreModel.findOne({ id: data.store_id });
     if (!store) throw new NotFoundError("Store not found");
 
+    data.category = data.category.trim();
+
     await this.validateCategory(data.category);
     await this.validateColors(data.colors);
 
@@ -238,6 +241,12 @@ class ProductService {
     });
 
     await this.refreshSearchVector(product.id);
+
+    await StoreModel.update(data.store_id, {
+      total_products: Number(store.total_products || 0) + 1,
+      products_listed: Number(store.products_listed || 0) + 1,
+      updated_at: new Date().toISOString(),
+    });
 
     return product;
   }

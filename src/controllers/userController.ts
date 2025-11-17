@@ -106,3 +106,83 @@ export const getAllUsers = async (
     pagination,
   });
 };
+
+/** 🏦 Register bank account for user */
+export const registerBankAccount = async (
+  req: CustomRequest,
+  res: Response
+): Promise<void> => {
+  if (!req.user)
+    throw new UnauthenticatedError("Please login to register a bank account");
+
+  const userId = req.user.userId;
+  const { bank_code, account_number, settlement_email } = req.body;
+
+  if (!bank_code || !account_number) {
+    throw new BadRequestError("bank_code and account_number are required");
+  }
+
+  const data = await User.registerBankAccount(
+    userId,
+    bank_code,
+    account_number,
+    settlement_email
+  );
+
+  res.status(StatusCodes.OK).json({
+    status: 1,
+    success: true,
+    message: data.message,
+    user: data.user,
+  });
+};
+
+/** 🏦 Update bank account */
+export const updateBankAccount = async (
+  req: CustomRequest,
+  res: Response
+): Promise<void> => {
+  if (!req.user)
+    throw new UnauthenticatedError("Please login to update bank account");
+
+  const userId = req.user.userId;
+  const { account_number, bank_code, settlement_email } = req.body;
+
+  if (!account_number && !bank_code && !settlement_email) {
+    throw new BadRequestError("Provide at least one field to update");
+  }
+
+  const data = await User.updateBankAccount(userId, {
+    account_number,
+    bank_code,
+    settlement_email,
+  });
+
+  res.status(StatusCodes.OK).json({
+    status: 1,
+    success: true,
+    message: data.message,
+    user: data.user,
+    verified: data.verified,
+  });
+};
+
+/** 🗑️ Delete bank account */
+export const deleteBankAccount = async (
+  req: CustomRequest,
+  res: Response
+): Promise<void> => {
+  if (!req.user)
+    throw new UnauthenticatedError("Please login to delete bank account");
+
+  const userId = req.user.userId;
+
+  const data = await User.deleteBankAccount(userId);
+
+  res.status(StatusCodes.OK).json({
+    status: 1,
+    success: true,
+    message: data.message,
+    user: data.user,
+  });
+};

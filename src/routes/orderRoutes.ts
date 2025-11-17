@@ -3,11 +3,13 @@ import {
   createOrder,
   getOrder,
   getUserOrders,
+  getVendorOrders,
   updateOrderStatus,
   cancelOrder,
   createPaystackOrder,
   verifyPaystackOrder,
   verifyBankAccountController,
+  fulfillOfflineDeliveryController,
 } from "../controllers/orderController.js";
 import {
   authenticateUser,
@@ -19,14 +21,23 @@ const router = express.Router();
 /**
  * 🧾 ORDER ROUTES OVERVIEW
  *
- * POST   /api/v1/orders                       → Create order (manual / cash / escrow)
- * GET    /api/v1/orders                       → Get all orders for logged-in user
- * GET    /api/v1/orders/:id                   → Get a single order (buyer/vendor/admin)
- * PATCH  /api/v1/orders/:id/status            → Update order status (admin/vendor)
- * DELETE /api/v1/orders/:id                   → Cancel an order
+ * OFFLINE ORDERS
+ * POST   /api/v1/orders                           → Create offline order
+ * PATCH  /api/v1/orders/:id/mark-paid-offline     → Mark offline order paid (vendor/admin)
  *
- * POST   /api/v1/orders/paystack/initialize   → Create order and init Paystack payment
- * GET    /api/v1/orders/paystack/verify       → Verify Paystack payment callback
+ * ONLINE ORDERS (PAYSTACK)
+ * POST   /api/v1/orders/paystack/initialize       → Create + init Paystack payment
+ * GET    /api/v1/orders/paystack/verify           → Verify Paystack payment
+ *
+ * GENERAL ORDER MANAGEMENT
+ * GET    /api/v1/orders                           → Get logged in user orders
+ * GET    /api/v1/orders/vendor                    → Get vendor’s orders
+ * GET    /api/v1/orders/:id                       → Get single order
+ * PATCH  /api/v1/orders/:id/status                → Update order status (vendor/admin)
+ * DELETE /api/v1/orders/:id                       → Cancel order
+ *
+ * BANK VERIFICATION
+ * POST   /api/v1/orders/paystack/verify-bank      → Verify bank account (frontend support)
  */
 
 // ───────────────────────────────────────────────
@@ -35,19 +46,38 @@ const router = express.Router();
 router.use(authenticateUser);
 
 // ───────────────────────────────────────────────
-// 📦 Core Order Routes
+// 📦 OFFLINE ORDER ROUTES
 // ───────────────────────────────────────────────
 
-// ➕ Create new order (without Paystack)
+// ➕ Create new OFFLINE order
 router.post("/", createOrder);
 
-// 🧾 Get all orders for current user
+// ✔ Mark an OFFLINE order as PAID manually
+router.patch(
+  "/:id/fulfill-offline",
+  authenticateUser,
+  authorizePermissions("vendor", "admin"),
+  fulfillOfflineDeliveryController
+);
+
+// ───────────────────────────────────────────────
+// 📦 GENERAL ORDER RETRIEVAL
+// ───────────────────────────────────────────────
+
+// 🧾 Get all logged-in buyer’s orders
 router.get("/", getUserOrders);
 
-// 📄 Get one order by ID
+// 🧾 Get vendor’s orders
+router.get("/vendor", authorizePermissions("admin", "vendor"), getVendorOrders);
+
+// 📄 Get one order by ID (buyer/vendor/admin)
 router.get("/:id", getOrder);
 
-// 🔄 Update order status (vendor/admin only)
+// ───────────────────────────────────────────────
+// 🔄 ORDER MANAGEMENT
+// ───────────────────────────────────────────────
+
+// Update status (vendor/admin only)
 router.patch(
   "/:id/status",
   authorizePermissions("admin", "vendor"),
@@ -58,16 +88,16 @@ router.patch(
 router.delete("/:id", cancelOrder);
 
 // ───────────────────────────────────────────────
-// 💳 Paystack Integration Routes
+// 💳 ONLINE (PAYSTACK) PAYMENT ROUTES
 // ───────────────────────────────────────────────
 
-// ➕ Create order + initialize Paystack
+// Initialize Paystack payment
 router.post("/paystack/initialize", createPaystackOrder);
 
-// ✅ Verify Paystack payment
+// Verify Paystack callback
 router.get("/paystack/verify", verifyPaystackOrder);
 
-// 🔹 Bank verification (for frontend use)
+// Verify bank account (frontend helper)
 router.post("/paystack/verify-bank", verifyBankAccountController);
 
 export default router;

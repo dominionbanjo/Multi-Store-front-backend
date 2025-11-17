@@ -1,51 +1,28 @@
 import express from "express";
 import {
   getCart,
-  addToCart,
-  incrementCartItem,
-  decrementCartItem,
-  updateCartItem,
-  removeCartItem,
+  setCartItems,
   clearCart,
 } from "../controllers/cartController.js";
 import { authenticateUser } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
 
-// 🔐 All cart routes require authentication
+// All cart routes require authentication
 router.use(authenticateUser);
 
 /**
- * 🧾 /api/v1/cart
+ * /api/v1/cart
  */
 router
   .route("/")
-  .get(getCart) // Get cart
-  .post(addToCart) // Add items
-  .delete(clearCart); // Clear cart
+  .get(getCart) // Get user cart
+  .delete(clearCart); // Clear cart completely
 
 /**
- * 🔼 Increment quantity
- * PATCH /api/v1/cart/increment
- */
-router.patch("/increment", incrementCartItem);
-
-/**
- * 🔽 Decrement quantity
- * PATCH /api/v1/cart/decrement
- */
-router.patch("/decrement", decrementCartItem);
-
-/**
- * 🔄 Update exact quantity
  * PATCH /api/v1/cart/update
+ * Update entire cart_items array
  */
-router.patch("/update", updateCartItem);
-
-/**
- * ❌ Remove specific item
- * DELETE /api/v1/cart/remove
- */
-router.delete("/remove", removeCartItem);
+router.patch("/update", setCartItems);
 
 export default router;

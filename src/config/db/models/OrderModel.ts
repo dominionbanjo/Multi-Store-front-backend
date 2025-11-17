@@ -11,11 +11,18 @@ export type OrderStatus =
   | "failed"
   | "canceled";
 
+export type PaymentStatus =
+  | "pending"
+  | "success"
+  | "failed"
+  | "canceled"
+  | "refunded"
+  | "unpaid";
+
 export interface IOrder {
   id: string;
   buyer_id: string;
   vendor_id: string;
-  store_id: string | null;
   escrow_id: string | null;
   delivery_id: string | null;
 
@@ -24,9 +31,11 @@ export interface IOrder {
   tax: number | null;
   total: number;
 
+  payment_method: "online" | "offline";
   payment_reference: string | null;
   payment_url: string | null;
-  payment_status: string | null;
+  payment_access_code: string | null;
+  payment_status: PaymentStatus | null;
 
   status: OrderStatus;
   notes: string | null;
@@ -59,13 +68,6 @@ class OrderModelClass extends BaseModel<IOrder> {
       onUpdate: "CASCADE",
     },
 
-    store_id: {
-      type: "UUID",
-      references: "stores(id)",
-      onDelete: "SET NULL",
-      onUpdate: "CASCADE",
-    },
-
     escrow_id: {
       type: "UUID",
       references: "escrows(id)",
@@ -85,9 +87,20 @@ class OrderModelClass extends BaseModel<IOrder> {
     tax: { type: "NUMERIC(10,2)" },
     total: { type: "NUMERIC(10,2)", notNull: true },
 
-    payment_reference: { type: "VARCHAR(255)" },
+    payment_method: {
+      type: "VARCHAR(50) CHECK (payment_method IN ('online','offline'))",
+      notNull: true,
+      default: "'offline'",
+    },
+
+    payment_reference: { type: "VARCHAR(255)", index: true },
     payment_url: { type: "TEXT" },
-    payment_status: { type: "VARCHAR(50)" },
+    payment_access_code: { type: "VARCHAR(255)" },
+
+    payment_status: {
+      type: "VARCHAR(50) CHECK (payment_status IN ('pending','success','failed','canceled','refunded','paid','unpaid'))",
+      default: "'unpaid'",
+    },
 
     status: {
       type: "VARCHAR(50)",
@@ -97,6 +110,7 @@ class OrderModelClass extends BaseModel<IOrder> {
     },
 
     notes: { type: "TEXT" },
+
     order_items: {
       type: "JSONB",
       notNull: true,

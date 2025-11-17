@@ -232,6 +232,44 @@ export const deleteStore = async (req: CustomRequest, res: Response) => {
   });
 };
 
+export const checkStoreNameAvailability = async (
+  req: Request,
+  res: Response
+) => {
+  const { store_name } = req.query;
+
+  if (!store_name || typeof store_name !== "string") {
+    throw new BadRequestError("store_name query parameter is required");
+  }
+
+  const exists = await StoreService.storeNameExists(store_name);
+
+  return res.status(StatusCodes.OK).json({
+    status: 1,
+    available: !exists,
+    exists,
+    store_name,
+  });
+};
+
+/** 📊 GET ANALYTICS FOR A STORE */
+export const getStoreAnalytics = async (req: CustomRequest, res: Response) => {
+  const { store_id } = req.params;
+  const user_id = req.user?.userId!;
+  const role = req.user?.role!;
+
+  if (!store_id) {
+    throw new BadRequestError("store_id parameter is required");
+  }
+
+  const analytics = await StoreService.getAnalytics(store_id, user_id, role);
+
+  return res.status(StatusCodes.OK).json({
+    status: 1,
+    success: true,
+    analytics,
+  });
+};
 /** 🏦 POST: /api/v1/stores/:id/bank */
 export const registerBankAccount = async (
   req: CustomRequest,

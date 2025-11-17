@@ -49,6 +49,7 @@ export const initializePaystackPayment = async (
         email,
         amount: Math.round(amount * 100),
         currency: "NGN",
+        callback_url: `${process.env.BASE_URL}/verify`,
       },
       { headers }
     );
@@ -76,32 +77,44 @@ export const verifyPaystackPayment = async (reference: string) => {
 /**
  * 🏦 Verify bank account (with clear feedback)
  */
+
 export const verifyBankAccount = async (
   account_number: string,
   bank_code: string
 ) => {
   try {
+    // 1️⃣ Resolve account number
     const res = await axios.get(`${PAYSTACK_BASE_URL}/bank/resolve`, {
       headers,
       params: { account_number, bank_code },
     });
 
     const data = res.data?.data;
-
     if (!data || !data.account_name) {
       throw new BadRequestError(
         "Bank verification failed — invalid account details"
       );
     }
 
+    // 2️⃣ Fetch actual bank name from Paystack bank list
+    const bankListRes = await axios.get(`${PAYSTACK_BASE_URL}/bank`, {
+      headers,
+    });
+
+    const bankList = bankListRes.data?.data || [];
+
+    const bank = bankList.find((b: any) => b.code === bank_code);
+
+    const bank_name = bank ? bank.name : "Unknown Bank";
+
     return {
       account_name: data.account_name,
       account_number: data.account_number,
       bank_id: data.bank_id,
-      bank_name: data.bank_name || "Unknown Bank",
+      bank_name,
     };
   } catch (error: any) {
-    handlePaystackError(error, "Bank verification");
+    throw new BadRequestError("Unable to verify bank account");
   }
 };
 

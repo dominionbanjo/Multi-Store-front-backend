@@ -11,6 +11,7 @@ import {
   EscrowModel,
   TransactionModel,
   ProductColorModel,
+  PayoutModel,
 } from "../../config/db/models/index.js";
 
 /**
@@ -42,6 +43,7 @@ export async function syncAllModels() {
     await DeliveryModel.sync();
     await EscrowModel.sync();
     await TransactionModel.sync();
+    await PayoutModel.sync();
 
     console.log("✅ All models synced successfully!");
   } catch (error) {

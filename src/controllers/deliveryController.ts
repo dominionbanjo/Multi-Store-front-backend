@@ -3,6 +3,13 @@ import { StatusCodes } from "http-status-codes";
 import { DeliveryService } from "../services/deliveryService.js";
 import { BadRequestError } from "../utils/errors/customError.js";
 
+interface CustomRequest extends Request {
+  user?: {
+    userId: string;
+    name: string;
+    role: string;
+  };
+}
 /** ➕ POST /api/v1/deliveries */
 export const createDelivery = async (req: Request, res: Response) => {
   const {
@@ -82,12 +89,16 @@ export const assignCourier = async (req: Request, res: Response) => {
 };
 
 /** ✅ PATCH /api/v1/deliveries/confirm/:orderId */
-export const confirmDelivery = async (req: Request, res: Response) => {
+export const confirmDelivery = async (req: CustomRequest, res: Response) => {
   const { orderId } = req.params;
   const { code } = req.body;
   if (!code) throw new BadRequestError("Confirmation code required");
+  const userId = req.user?.userId;
+  if (!userId) {
+    throw new BadRequestError("Unauthorized release");
+  }
 
-  const result = await DeliveryService.confirmDelivery(orderId, code);
+  const result = await DeliveryService.confirmDelivery(orderId, code, userId);
 
   res.status(StatusCodes.OK).json({
     status: 1,

@@ -22,12 +22,14 @@ import storeRouter from "./routes/storeRoutes.js";
 import userRouter from "./routes/userRoutes.js";
 import wishlistRouter from "./routes/wishlistRoutes.js";
 import productCategoryRouter from "./routes/productCategoryRoutes.js";
+import deliveryRouter from "./routes/deliveryRoutes.js";
 
 // Middlewares
 import errorHandlerMiddleWare from "./middlewares/errorHandlerMiddleWare.js";
 
 // ✅ Import DB sync utility
-import { syncAllModels } from "./utils/db/sync.js";
+// import { syncAllModels } from "./utils/db/sync.js";
+import paystackWebhookRoute from "./routes/paystackWebhookRoute.js";
 
 // CLOUDINARY CONFIG
 cloudinary.v2.config({
@@ -52,6 +54,8 @@ app.use(configureRateLimit());
 // ───────────────────────────────────────────────
 // 🧰 CORE MIDDLEWARE
 // ───────────────────────────────────────────────
+app.use("/webhook/paystack", express.raw({ type: "application/json" }));
+
 app.use(express.json());
 app.use(morgan("dev"));
 
@@ -67,6 +71,8 @@ app.use("/api/v1/review", reviewRouter);
 app.use("/api/v1/store", storeRouter);
 app.use("/api/v1/wishlist", wishlistRouter);
 app.use("/api/v1/product-categories", productCategoryRouter);
+app.use("/api/v1/delivery", deliveryRouter);
+app.use("/webhook/paystack", paystackWebhookRoute);
 
 // ───────────────────────────────────────────────
 // 📘 STATIC API DOCS (Generated index.html)

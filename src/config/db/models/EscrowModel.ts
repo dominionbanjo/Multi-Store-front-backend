@@ -19,6 +19,9 @@ export interface IEscrow {
   release_code: string | null; // unique 6-digit or random code
   status: EscrowStatus;
 
+  trial_count: number; // NEW
+  disabled: boolean; // NEW
+
   released_at: string | null;
   refunded_at: string | null;
 
@@ -54,6 +57,9 @@ class EscrowModelClass extends BaseModel<IEscrow> {
       onDelete: "CASCADE",
       onUpdate: "CASCADE",
     },
+
+    trial_count: { type: "INT", default: "0" }, // NEW
+    disabled: { type: "BOOLEAN", default: "false" }, // NEW
 
     amount: { type: "NUMERIC(12,2)", notNull: true },
     hold_until: { type: "TIMESTAMPTZ" },

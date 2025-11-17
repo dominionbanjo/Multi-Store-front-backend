@@ -92,6 +92,7 @@ export interface IStore {
   bank_name: string | null;
   recipient_code: string | null;
   settlement_email: string | null;
+  payout_verified: Boolean;
 
   /** 📊 Analytics + Cached Customers */
   analytics: IAnalytics | null;
@@ -171,6 +172,7 @@ class StoreModelClass extends BaseModel<IStore> {
     bank_name: { type: "VARCHAR(100)" },
     recipient_code: { type: "VARCHAR(100)" },
     settlement_email: { type: "VARCHAR(255)" },
+    payout_verified: { type: "BOOLEAN", default: "false" },
 
     /** 📈 Analytics & Customer Cache */
     analytics: { type: "JSONB" },

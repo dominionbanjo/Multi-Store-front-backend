@@ -56,6 +56,14 @@ export interface IUser {
   /** 🏠 Full address object */
   address: IUserAddress | null;
 
+  /** 💳 Payout info */
+  account_number: string | null;
+  bank_code: string | null;
+  bank_name: string | null;
+  recipient_code: string | null;
+  settlement_email: string | null;
+  payout_verified: Boolean;
+
   created_at: string | null;
   updated_at: string | null;
 }
@@ -128,6 +136,14 @@ class UserModelClass extends BaseModel<IUser> {
 
     /** 🏠 JSONB address object */
     address: { type: "JSONB" },
+
+    /** 💳 Bank & payout info */
+    account_number: { type: "VARCHAR(20)" },
+    bank_code: { type: "VARCHAR(10)" },
+    bank_name: { type: "VARCHAR(100)" },
+    recipient_code: { type: "VARCHAR(100)" },
+    settlement_email: { type: "VARCHAR(255)" },
+    payout_verified: { type: "BOOLEAN", default: "false" },
 
     created_at: { type: "TIMESTAMP", default: "NOW()" },
     updated_at: { type: "TIMESTAMP", default: "NOW()" },
