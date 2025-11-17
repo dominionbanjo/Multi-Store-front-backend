@@ -187,6 +187,7 @@ export class EscrowService {
   }
 
   /** 🔓 Release escrow funds (idempotent) */
+  /** 🔓 Release escrow funds (secure + trial count + lockout + idempotent) */
   static async releaseEscrow(order_id: string, code: string, user_id: string) {
     const now = new Date().toISOString();
 
@@ -202,14 +203,40 @@ export class EscrowService {
     if (!escrow) throw new NotFoundError("Escrow not found");
 
     /* ----------------------- 3. Authorization Check -------------------------- */
-    if (user_id !== order.buyer_id)
+    if (user_id !== order.buyer_id) {
       throw new BadRequestError("Only the buyer can release escrow");
+    }
 
-    /* ------------------------ 4. Validate Release Code ------------------------- */
-    if (escrow.release_code !== code)
-      throw new BadRequestError("Invalid release code");
+    /* ------------------------- 4. Locked Escrow Check ------------------------- */
+    if (escrow.disabled) {
+      throw new BadRequestError(
+        "This escrow is locked due to too many incorrect code attempts"
+      );
+    }
 
-    /* ------------------------- 5. Idempotency Check --------------------------- */
+    /* ------------------------- 5. Validate Release Code ----------------------- */
+    if (escrow.release_code !== code) {
+      const newAttempts = (escrow.trial_count ?? 0) + 1;
+
+      await EscrowModel.update(escrow.id, {
+        trial_count: newAttempts,
+        disabled: newAttempts >= 4, // lock on 4th wrong attempt
+        updated_at: now,
+      });
+
+      if (newAttempts >= 4) {
+        throw new BadRequestError(
+          "Escrow disabled after 4 incorrect code attempts"
+        );
+      }
+
+      const attemptsLeft = 4 - newAttempts;
+      throw new BadRequestError(
+        `Invalid release code. Attempts left: ${attemptsLeft}`
+      );
+    }
+
+    /* ------------------------- 6. Idempotency Check --------------------------- */
     if (escrow.status === "released") {
       return {
         success: true,
@@ -218,19 +245,20 @@ export class EscrowService {
       };
     }
 
-    /* ------------------------ 6. Escrow Must Be Delivered ---------------------- */
+    /* ------------------------ 7. Escrow Must Be Delivered ---------------------- */
     if (escrow.status !== "delivered") {
       throw new BadRequestError("Escrow is not eligible for release");
     }
 
-    /* --------------------------- 7. Fetch Store ------------------------------- */
+    /* --------------------------- 8. Fetch Store ------------------------------- */
     const store = await StoreModel.findById(order.vendor_id!);
     if (!store) throw new NotFoundError("Store not found");
 
-    if (!store.recipient_code)
+    if (!store.recipient_code) {
       throw new BadRequestError("Store does not have a payout account");
+    }
 
-    /* --------------------------- 8. Initiate Transfer ------------------------- */
+    /* --------------------------- 9. Initiate Transfer ------------------------- */
     const transfer = await initiateTransfer({
       recipient_code: store.recipient_code,
       amount: escrow.amount,
@@ -241,7 +269,7 @@ export class EscrowService {
       throw new BadRequestError("Failed to initiate payout transfer");
     }
 
-    /* ----------------------- 9. Create Pending Payout Record ------------------ */
+    /* ---------------------- 10. Create Pending Payout Record ------------------ */
     await PayoutService.createPendingPayout({
       order_id: order.id,
       escrow_id: escrow.id,
@@ -251,27 +279,29 @@ export class EscrowService {
       transfer_data: transfer,
     });
 
-    /* --------------------------- 10. Update Escrow ---------------------------- */
+    /* --------------------------- 11. Update Escrow ---------------------------- */
     await EscrowModel.update(escrow.id, {
       status: "released",
       released_at: now,
       updated_at: now,
+      trial_count: 0, // reset after successful release
+      disabled: false, // reset lock
     });
 
-    /* --------------------------- 11. Update Order ----------------------------- */
+    /* --------------------------- 12. Update Order ----------------------------- */
     await OrderModel.update(order.id, {
       status: "completed",
       updated_at: now,
     });
 
-    /* ---------------------- 12. Update Store Stats & Customers ----------------- */
+    /* ---------------------- 13. Update Store Stats & Customers ----------------- */
     await this.updateStoreStatsAndCustomers(
       store.id,
       order.buyer_id,
       escrow.amount
     );
 
-    /* ---------------------------- 13. Notification ----------------------------- */
+    /* ---------------------------- 14. Notification ----------------------------- */
     const vendor = await UserModel.findById(order.vendor_id).catch(() => null);
 
     if (vendor?.email) {
