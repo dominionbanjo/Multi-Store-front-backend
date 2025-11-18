@@ -478,6 +478,34 @@ export class OrderService {
           updated_at: now,
         });
 
+        // -------------------------------------
+        // ⭐ SEND ORDER CREATED EMAILS
+        // -------------------------------------
+        try {
+          const buyer = await UserModel.findById(data.buyer_id).catch(
+            () => null
+          );
+          const vendor = await UserModel.findById(vendor_id).catch(() => null);
+
+          if (buyer?.email) {
+            await OrderMailService.sendOrderCreated({
+              email: buyer.email,
+              name: buyer.first_name,
+              order,
+            });
+          }
+
+          if (vendor?.email) {
+            await OrderMailService.sendVendorNewOrder({
+              email: vendor.email,
+              name: vendor.first_name ?? vendor.store_name ?? "Vendor",
+              order,
+            });
+          }
+        } catch (err) {
+          console.error("Order creation email error:", err);
+        }
+
         // Create escrow
         const escrow = await EscrowService.createEscrow({
           order_id: order.id,

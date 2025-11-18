@@ -183,7 +183,7 @@ export const initiateTransfer = async ({
       },
       { headers }
     );
-
+    console.log("Transfer carried");
     return res.data?.data;
   } catch (error: any) {
     handlePaystackError(error, "Funds transfer");

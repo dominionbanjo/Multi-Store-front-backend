@@ -25,6 +25,10 @@ class ReviewService {
     const product = await ProductModel.findById(product_id);
     if (!product) throw new NotFoundError("Product not found");
 
+    if (product.vendor_id === user_id) {
+      throw new BadRequestError("You cannot review your own product");
+    }
+
     const existing = await ProductReviewModel.findOne({ user_id, product_id });
     if (existing)
       throw new BadRequestError("You have already reviewed this product");
