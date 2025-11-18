@@ -59,28 +59,6 @@ export class EscrowService {
       updated_at: now,
     });
 
-    /** ─────────────────────── EMAILS ───────────────────────── */
-
-    const buyer = await UserModel.findById(data.buyer_id).catch(() => null);
-    const vendor = await UserModel.findById(data.vendor_id).catch(() => null);
-
-    if (buyer?.email) {
-      await EscrowMailService.sendEscrowCreatedBuyer({
-        email: buyer.email,
-        name: buyer.first_name,
-        order_id: data.order_id,
-      });
-    }
-
-    if (vendor?.email) {
-      await EscrowMailService.sendEscrowCreatedVendor({
-        email: vendor.email,
-        name: vendor.first_name ?? vendor.store_name ?? "Vendor",
-        order_id: data.order_id,
-        amount: data.amount,
-      });
-    }
-
     return escrow;
   }
 
@@ -251,7 +229,7 @@ export class EscrowService {
     }
 
     /* --------------------------- 8. Fetch Store ------------------------------- */
-    const store = await StoreModel.findById(order.vendor_id!);
+    const store = await StoreModel.findOne({ user_id: order.vendor_id });
     if (!store) throw new NotFoundError("Store not found");
 
     if (!store.recipient_code) {
@@ -303,7 +281,7 @@ export class EscrowService {
     );
 
     /* ---------------------------- 14. Notify Vendor ---------------------------- */
-    const vendor = await UserModel.findById(order.vendor_id).catch(() => null);
+    const vendor = await UserModel.findById(order.vendor_id);
 
     if (vendor?.email) {
       await EscrowMailService.sendEscrowReleasedVendor({

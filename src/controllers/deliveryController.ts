@@ -58,12 +58,21 @@ export const getDelivery = async (req: Request, res: Response) => {
 };
 
 /** 🚚 PATCH /api/v1/deliveries/:id/status */
-export const updateDeliveryStatus = async (req: Request, res: Response) => {
+export const updateDeliveryStatus = async (
+  req: CustomRequest,
+  res: Response
+) => {
   const { id } = req.params;
   const { status } = req.body;
   if (!status) throw new BadRequestError("Delivery status is required");
+  if (!req.user) throw new BadRequestError("Unauthorized");
 
-  const result = await DeliveryService.updateStatus(id, status);
+  const result = await DeliveryService.updateStatus(
+    id,
+    status,
+    req.user.userId,
+    req.user.role
+  );
 
   res.status(StatusCodes.OK).json({
     status: 1,
@@ -108,17 +117,17 @@ export const confirmDelivery = async (req: CustomRequest, res: Response) => {
 };
 
 /** 🧾 PATCH /api/v1/deliveries/:id/proof */
-export const uploadProof = async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { proof_url } = req.body;
-  if (!proof_url) throw new BadRequestError("Proof URL is required");
+export const uploadProof = async (req: CustomRequest, res: Response) => {
+  if (!req.user) throw new BadRequestError("Unauthorized");
 
-  const delivery = await DeliveryService.uploadProof(id, proof_url);
+  const { id } = req.params;
+
+  const result = await DeliveryService.uploadProof(id, req.file);
 
   res.status(StatusCodes.OK).json({
     status: 1,
     success: true,
-    message: "Proof of delivery uploaded",
-    delivery,
+    message: result.message,
+    delivery: result.delivery,
   });
 };

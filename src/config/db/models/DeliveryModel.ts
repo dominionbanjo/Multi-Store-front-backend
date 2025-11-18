@@ -28,6 +28,7 @@ export interface IDelivery {
   delivery_status: DeliveryStatus;
   confirmation_code: string | null; // code used to mark delivery done
   proof_of_delivery_url: string | null;
+  proof_of_delivery_url_public_id: string | null;
 
   estimated_delivery: string | null;
   delivered_at: string | null;
@@ -96,6 +97,7 @@ class DeliveryModelClass extends BaseModel<IDelivery> {
 
     confirmation_code: { type: "VARCHAR(20)" },
     proof_of_delivery_url: { type: "TEXT" },
+    proof_of_delivery_url_public_id: { type: "TEXT" },
 
     estimated_delivery: { type: "TIMESTAMPTZ" },
     delivered_at: { type: "TIMESTAMPTZ" },

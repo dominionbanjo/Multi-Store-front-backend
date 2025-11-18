@@ -11,6 +11,7 @@ import { DeliveryMailService } from "../utils/mails/DeliveryMailService.js";
 import { UserModel } from "../config/db/models/UserModel.js";
 import { EscrowModel } from "../config/db/models/EscrowModel.js";
 import StoreService from "./storeService.js";
+import UploadService from "./uploadService.js";
 
 /**
  * 🚚 Delivery Service (Idempotent + Full Mail Notifications)
@@ -155,24 +156,30 @@ export class DeliveryService {
   /* -------------------------------------------------------------------------- */
   /*                               4. UPDATE STATUS                             */
   /* -------------------------------------------------------------------------- */
-  static async updateStatus(delivery_id: string, status: DeliveryStatus) {
+  static async updateStatus(
+    delivery_id: string,
+    status: DeliveryStatus,
+    userId: string,
+    role: string
+  ) {
     const delivery = await DeliveryModel.findById(delivery_id);
     if (!delivery) throw new NotFoundError("Delivery not found");
 
+    // 🚫 Ensure only vendor and admin can update status
+    if (delivery.vendor_id !== userId && role !== "admin") {
+      throw new BadRequestError(
+        "Only the assigned vendor can update delivery status"
+      );
+    }
+
     const order = await OrderModel.findById(delivery.order_id);
 
-    /** -------------------------------------------------------
-     * 1. Prevent setting "confirmed" — only confirmDelivery()
-     * ------------------------------------------------------- */
     if (status === "confirmed") {
       throw new BadRequestError(
         "Only the vendor confirmation process can set status to confirmed"
       );
     }
 
-    /** -------------------------------------------------------
-     * 2. Prevent moving backward in delivery flow
-     * ------------------------------------------------------- */
     const FLOW: DeliveryStatus[] = [
       "pending",
       "assigned",
@@ -192,9 +199,6 @@ export class DeliveryService {
       );
     }
 
-    /** -------------------------------------------------------
-     * 3. Idempotency
-     * ------------------------------------------------------- */
     if (delivery.delivery_status === status) {
       return {
         success: true,
@@ -203,9 +207,6 @@ export class DeliveryService {
       };
     }
 
-    /** -------------------------------------------------------
-     * 4. Safe update
-     * ------------------------------------------------------- */
     await DeliveryModel.update(delivery_id, {
       delivery_status: status,
       updated_at: new Date().toISOString(),
@@ -214,7 +215,6 @@ export class DeliveryService {
     const buyer = await UserModel.findById(order.buyer_id);
     const vendor = await UserModel.findById(order.vendor_id);
 
-    // Send notification emails (unchanged)
     if (buyer?.email) {
       await DeliveryMailService.sendDeliveryStatusUpdateBuyer({
         email: buyer.email,
@@ -233,9 +233,6 @@ export class DeliveryService {
       });
     }
 
-    /** -------------------------------------------------------
-     * 5. Special case: delivered → send release code
-     * ------------------------------------------------------- */
     if (status === "delivered" && order.payment_method === "online") {
       if (!order.escrow_id)
         throw new BadRequestError("Escrow record missing for this order");
@@ -282,14 +279,15 @@ export class DeliveryService {
 
     const delivery = await DeliveryModel.findOne({ order_id });
     if (!delivery) throw new NotFoundError("Delivery not found");
+    console.log(order);
 
-    if (delivery.delivery_status === "confirmed") {
-      return {
-        success: true,
-        idempotent: true,
-        message: "Delivery already confirmed",
-      };
-    }
+    // if (delivery.delivery_status === "confirmed") {
+    //   return {
+    //     success: true,
+    //     idempotent: true,
+    //     message: "Delivery already confirmed",
+    //   };
+    // }
 
     await DeliveryModel.update(delivery.id, {
       delivery_status: "confirmed",
@@ -323,17 +321,39 @@ export class DeliveryService {
   /* -------------------------------------------------------------------------- */
   /*                           6. UPLOAD PROOF                                  */
   /* -------------------------------------------------------------------------- */
-  static async uploadProof(delivery_id: string, url: string) {
+
+  static async uploadProof(delivery_id: string, file?: Express.Multer.File) {
+    if (!file) throw new BadRequestError("Proof image is required");
+
     const delivery = await DeliveryModel.findById(delivery_id);
     if (!delivery) throw new NotFoundError("Delivery not found");
 
-    if (delivery.proof_of_delivery_url === url) return delivery;
+    // Upload new proof
+    const uploaded = await UploadService.uploadSingle(
+      file,
+      "easystore/delivery-proofs"
+    );
 
+    if (!uploaded?.url) {
+      throw new BadRequestError("Failed to upload delivery proof");
+    }
+
+    // Delete old proof if exists
+    if (delivery.proof_of_delivery_url) {
+      const publicId = delivery.proof_of_delivery_url_public_id;
+      if (publicId) {
+        await UploadService.deleteSingle(publicId);
+      }
+    }
+
+    // Save new proof
     const updated = await DeliveryModel.update(delivery_id, {
-      proof_of_delivery_url: url,
+      proof_of_delivery_url: uploaded.url,
+      proof_of_delivery_url_public_id: uploaded.public_id,
       updated_at: new Date().toISOString(),
     });
 
+    // Notify buyer that proof was uploaded
     const order = await OrderModel.findById(delivery.order_id);
     const buyer = await UserModel.findById(order.buyer_id);
 
@@ -345,6 +365,9 @@ export class DeliveryService {
       });
     }
 
-    return updated;
+    return {
+      message: "Proof of delivery uploaded successfully",
+      delivery: updated,
+    };
   }
 }

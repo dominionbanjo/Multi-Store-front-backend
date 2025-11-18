@@ -29,6 +29,7 @@ import errorHandlerMiddleWare from "./middlewares/errorHandlerMiddleWare.js";
 
 // Webhook router
 import paystackWebhookRoute from "./routes/paystackWebhookRoute.js";
+import { syncAllModels } from "./utils/db/sync.js";
 
 // CLOUDINARY CONFIG
 cloudinary.v2.config({
@@ -102,6 +103,7 @@ app.use(errorHandlerMiddleWare);
 // SERVER START
 const port = process.env.PORT || 5300;
 
+// await syncAllModels();
 app.listen(port, () => {
   const url = `http://localhost:${port}`;
   console.log(`🚀 Server listening on port ${port}`);

@@ -95,7 +95,11 @@ router.delete("/:id", cancelOrder);
 router.post("/paystack/initialize", createPaystackOrder);
 
 // Verify Paystack callback
-router.get("/paystack/verify", verifyPaystackOrder);
+router.get(
+  "/paystack/verify",
+  authorizePermissions("admin"),
+  verifyPaystackOrder
+);
 
 // Verify bank account (frontend helper)
 router.post("/paystack/verify-bank", verifyBankAccountController);

@@ -11,6 +11,7 @@ import {
   authenticateUser,
   authorizePermissions,
 } from "../middlewares/authMiddleware.js";
+import upload from "../utils/images/multer.js";
 
 const router = express.Router();
 
@@ -27,6 +28,6 @@ router.get("/:id", getDelivery);
 router.patch("/:id/status", updateDeliveryStatus);
 router.patch("/:id/assign", assignCourier);
 router.patch("/confirm/:orderId", confirmDelivery);
-router.patch("/:id/proof", uploadProof);
+router.patch("/:id/proof", upload.single("image"), uploadProof);
 
 export default router;

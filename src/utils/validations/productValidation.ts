@@ -161,18 +161,6 @@ export const validateAddReview = withValidationErrors(
       .optional()
       .isString()
       .withMessage("Comment must be a string"),
-
-    body("product_id")
-      .optional()
-      .isUUID()
-      .withMessage("Invalid product ID format")
-      .custom(async (product_id, { req }) => {
-        const pid = product_id || req.params?.product_id;
-        if (!pid) throw new Error("Missing product ID");
-
-        const result = await sql`SELECT id FROM products WHERE id = ${pid}`;
-        if (result.length === 0) throw new Error("Product does not exist");
-      }),
   ],
   ALLOWED_ADD_REVIEW_FIELDS
 );
