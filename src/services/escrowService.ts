@@ -13,6 +13,7 @@ import { initiateTransfer } from "../utils/payment/paystack.js";
 import { EscrowMailService } from "../utils/mails/EscrowMailService.js";
 import PayoutService from "./payoutService.js";
 import StoreService from "./storeService.js";
+import { PayoutModel } from "../config/db/models/index.js";
 
 /**
  * 💰 Escrow Service (Idempotent-safe)
@@ -166,39 +167,40 @@ export class EscrowService {
   }
 
   /** 🔓 Release escrow funds (secure + trial count + lockout + idempotent) */
+  /** 🔓 Release escrow funds (vendor payout — safe even if Paystack fails) */
   static async releaseEscrow(order_id: string, code: string, user_id: string) {
     const now = new Date().toISOString();
 
-    /* ----------------------------- 1. Load Order ----------------------------- */
+    // 1. Load order
     const order = await OrderModel.findById(order_id);
     if (!order) throw new NotFoundError("Order not found");
 
-    /* ------------------------- 2. Load Escrow For Order ----------------------- */
+    // 2. Load escrow
     if (!order.escrow_id)
       throw new BadRequestError("Order has no escrow attached");
 
     const escrow = await EscrowModel.findById(order.escrow_id);
     if (!escrow) throw new NotFoundError("Escrow not found");
 
-    /* ----------------------- 3. Authorization Check -------------------------- */
+    // 3. Auth check
     if (user_id !== order.buyer_id) {
       throw new BadRequestError("Only the buyer can release escrow");
     }
 
-    /* ------------------------- 4. Locked Escrow Check ------------------------- */
+    // 4. Locked check
     if (escrow.disabled) {
       throw new BadRequestError(
         "This escrow is locked due to too many incorrect code attempts"
       );
     }
 
-    /* ------------------------- 5. Validate Release Code ----------------------- */
+    // 5. Code validation
     if (escrow.release_code !== code) {
       const newAttempts = (escrow.trial_count ?? 0) + 1;
 
       await EscrowModel.update(escrow.id, {
         trial_count: newAttempts,
-        disabled: newAttempts >= 4, // lock on 4th wrong attempt
+        disabled: newAttempts >= 4,
         updated_at: now,
       });
 
@@ -214,7 +216,7 @@ export class EscrowService {
       );
     }
 
-    /* ------------------------- 6. Idempotency Check --------------------------- */
+    // 6. Idempotent
     if (escrow.status === "released") {
       return {
         success: true,
@@ -223,32 +225,26 @@ export class EscrowService {
       };
     }
 
-    /* ------------------------ 7. Escrow Must Be Delivered ---------------------- */
+    // 7. Ensure delivered
     if (escrow.status !== "delivered") {
       throw new BadRequestError("Escrow is not eligible for release");
     }
 
-    /* --------------------------- 8. Fetch Store ------------------------------- */
+    // 8. Get store
     const store = await StoreModel.findOne({ user_id: order.vendor_id });
     if (!store) throw new NotFoundError("Store not found");
-
-    if (!store.recipient_code) {
+    if (!store.recipient_code)
       throw new BadRequestError("Store does not have a payout account");
-    }
 
-    /* --------------------------- 9. Initiate Transfer ------------------------- */
+    // 9. INITIATE PAYSTACK PAYOUT
     const transfer = await initiateTransfer({
       recipient_code: store.recipient_code,
       amount: escrow.amount,
       reason: `Payout for order ${order.id}`,
     });
 
-    if (!transfer) {
-      throw new BadRequestError("Failed to initiate payout transfer");
-    }
-
-    /* ---------------------- 10. Create Pending Payout Record ------------------ */
-    await PayoutService.createPendingPayout({
+    // 10. ALWAYS CREATE PAYOUT RECORD (success or fail)
+    const payout = await PayoutService.createPendingPayout({
       order_id: order.id,
       escrow_id: escrow.id,
       recipient_code: store.recipient_code,
@@ -257,22 +253,31 @@ export class EscrowService {
       transfer_data: transfer,
     });
 
-    /* --------------------------- 11. Update Escrow ---------------------------- */
+    // 🔥 If Paystack payout FAILED → mark payout as failed
+    if (!transfer.ok) {
+      await PayoutModel.update(payout.id, {
+        status: "failed",
+        updated_at: now,
+      });
+      console.error("PAYOUT FAILED (Vendor):", transfer.error);
+    }
+
+    // 11. Update escrow to released
     await EscrowModel.update(escrow.id, {
       status: "released",
       released_at: now,
       updated_at: now,
-      trial_count: 0, // reset after successful release
-      disabled: false, // reset lock
+      trial_count: 0,
+      disabled: false,
     });
 
-    /* --------------------------- 12. Update Order ----------------------------- */
+    // 12. Update order
     await OrderModel.update(order.id, {
       status: "completed",
       updated_at: now,
     });
 
-    /* --------------------------- 13. Update Store Analytics -------------------- */
+    // 13. Update store analytics
     await StoreService.updateStoreAnalytics(
       store.id,
       escrow.amount,
@@ -280,9 +285,8 @@ export class EscrowService {
       order.order_items
     );
 
-    /* ---------------------------- 14. Notify Vendor ---------------------------- */
+    // 14. Notify vendor
     const vendor = await UserModel.findById(order.vendor_id);
-
     if (vendor?.email) {
       await EscrowMailService.sendEscrowReleasedVendor({
         email: vendor.email,
@@ -295,23 +299,24 @@ export class EscrowService {
     return {
       success: true,
       idempotent: false,
-      message: "Escrow released and payout initiated",
-      payout_transfer_code: transfer.transfer_code,
+      message:
+        transfer.ok === true
+          ? "Escrow released and payout initiated"
+          : "Escrow released but payout FAILED — admin must retry manually",
+      payout_status: transfer.ok ? "pending" : "failed",
+      payout_reference: transfer.reference,
     };
   }
 
-  /** 💸 Refund escrow to the buyer (secure, idempotent, payout-enabled) */
-  static async refundEscrow(
-    escrow_id: string,
-    requestedBy: string // user_id (buyer or admin)
-  ) {
+  /** 💸 Refund escrow funds to buyer (safe even if Paystack fails) */
+  static async refundEscrow(escrow_id: string, requestedBy: string) {
     const now = new Date().toISOString();
 
-    /* ----------------------------- 1. Load Escrow ----------------------------- */
+    // 1. Load escrow
     const escrow = await EscrowModel.findById(escrow_id);
     if (!escrow) throw new NotFoundError("Escrow not found");
 
-    /* ------------------------- 2. Load Order For Escrow ----------------------- */
+    // 2. Load order
     const order = escrow.order_id
       ? await OrderModel.findById(escrow.order_id)
       : null;
@@ -319,14 +324,14 @@ export class EscrowService {
     if (!order)
       throw new NotFoundError("Order associated with escrow not found");
 
-    /* -------------------------- 3. Validate Order Status ---------------------- */
+    // 3. Can refund only cancelled orders
     if (order.status !== "canceled") {
       throw new BadRequestError(
         "Order must be canceled before escrow can be refunded"
       );
     }
 
-    /* --------------------------- 4. Authorization Check ------------------------ */
+    // 4. Authorization
     if (requestedBy !== escrow.buyer_id) {
       const requester = await UserModel.findById(requestedBy).catch(() => null);
       if (!requester || requester.account_type !== "admin") {
@@ -334,7 +339,7 @@ export class EscrowService {
       }
     }
 
-    /* ----------------------------- 5. Idempotency ----------------------------- */
+    // 5. Idempotency
     if (escrow.status === "refunded") {
       return {
         success: true,
@@ -343,36 +348,30 @@ export class EscrowService {
       };
     }
 
-    /* ------------------------- 6. Escrow MUST BE FUNDED ----------------------- */
+    // 6. Ensure escrow was funded
     if (escrow.status !== "funded") {
       throw new BadRequestError(
         `Escrow cannot be refunded unless status is 'funded' (current: ${escrow.status})`
       );
     }
 
-    /* -------------------------- 7. Fetch Buyer Details ------------------------ */
+    // 7. Get buyer
     const buyer = await UserModel.findById(escrow.buyer_id);
     if (!buyer) throw new NotFoundError("Buyer not found");
-
-    if (!buyer.recipient_code) {
+    if (!buyer.recipient_code)
       throw new BadRequestError(
         "Buyer has no registered bank account for refund"
       );
-    }
 
-    /* --------------------- 8. Initiate Paystack Refund Transfer --------------- */
+    // 8. INITIATE PAYSTACK REFUND TRANSFER
     const transfer = await initiateTransfer({
       recipient_code: buyer.recipient_code,
       amount: escrow.amount,
       reason: `Refund for order ${order.id}`,
     });
 
-    if (!transfer) {
-      throw new BadRequestError("Failed to initiate refund payout");
-    }
-
-    /* --------------------------- 9. Create Pending Payout ---------------------- */
-    await PayoutService.createPendingPayout({
+    // 9. ALWAYS CREATE PAYOUT (success or fail)
+    const payout = await PayoutService.createPendingPayout({
       order_id: order.id,
       escrow_id: escrow.id,
       recipient_code: buyer.recipient_code,
@@ -381,21 +380,30 @@ export class EscrowService {
       transfer_data: transfer,
     });
 
-    /* ------------------------------- 10. Update Escrow ------------------------ */
+    // 🔥 If transfer failed, mark payout as FAILED
+    if (!transfer.ok) {
+      await PayoutModel.update(payout.id, {
+        status: "failed",
+        updated_at: now,
+      });
+      console.error("REFUND FAILED (Buyer):", transfer.error);
+    }
+
+    // 10. Mark escrow as refunded
     await EscrowModel.update(escrow.id, {
       status: "refunded",
       refunded_at: now,
       updated_at: now,
     });
 
-    /* ------------------------------- 11. Update Order ------------------------- */
+    // 11. Update order
     await OrderModel.update(order.id, {
       status: "failed",
       payment_status: "refunded",
       updated_at: now,
     });
 
-    /* ---------------------------- 12. Log Transaction ------------------------- */
+    // 12. Log transaction
     await TransactionModel.create({
       id: uuidv4(),
       order_id: order.id,
@@ -405,15 +413,15 @@ export class EscrowService {
       type: "refund",
       amount: escrow.amount,
       currency: "NGN",
-      reference: transfer.transfer_code ?? null,
+      reference: transfer.reference ?? null,
       description: "Refund initiated to buyer",
-      status: "pending",
+      status: transfer.ok ? "pending" : "failed",
       metadata: transfer,
       created_at: now,
       updated_at: now,
     });
 
-    /* ------------------------------- 13. Email Buyer -------------------------- */
+    // 13. Email buyer
     if (buyer.email) {
       await EscrowMailService.sendEscrowRefundedBuyer({
         email: buyer.email,
@@ -426,8 +434,12 @@ export class EscrowService {
     return {
       success: true,
       idempotent: false,
-      message: "Refund initiated — awaiting Paystack confirmation",
-      transfer_code: transfer.transfer_code,
+      message:
+        transfer.ok === true
+          ? "Refund initiated — awaiting Paystack confirmation"
+          : "Refund FAILED — admin must retry manually",
+      payout_status: transfer.ok ? "pending" : "failed",
+      payout_reference: transfer.reference,
     };
   }
 

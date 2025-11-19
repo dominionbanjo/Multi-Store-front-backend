@@ -279,15 +279,14 @@ export class DeliveryService {
 
     const delivery = await DeliveryModel.findOne({ order_id });
     if (!delivery) throw new NotFoundError("Delivery not found");
-    console.log(order);
 
-    // if (delivery.delivery_status === "confirmed") {
-    //   return {
-    //     success: true,
-    //     idempotent: true,
-    //     message: "Delivery already confirmed",
-    //   };
-    // }
+    if (delivery.delivery_status === "confirmed") {
+      return {
+        success: true,
+        idempotent: true,
+        message: "Delivery already confirmed",
+      };
+    }
 
     await DeliveryModel.update(delivery.id, {
       delivery_status: "confirmed",
