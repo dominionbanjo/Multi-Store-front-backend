@@ -6,16 +6,16 @@ import { ProductColorModel } from "../config/db/models/ColorModel.js";
 import { ProductCategoryModel, StoreModel } from "../config/db/models/index.js";
 import UploadService from "./uploadService.js";
 import sql from "../config/connect.js";
+import { ServiceCache } from "../utils/helpers/ServiceCache.js";
 
 class ProductService {
-  // ───────────────────────────────────────────────
-  // ⭐ VALIDATE COLORS
-  // ───────────────────────────────────────────────
+  // ======================================================================
+  // VALIDATIONS
+  // ======================================================================
   private static async validateColors(colors?: string[] | null) {
     if (!colors || colors.length === 0) return;
 
     const normalized = colors.map((c) => c.trim());
-
     const { data: allColors } = await ProductColorModel.findAll();
     const allowedNames = allColors.map((c) => c.name.trim());
 
@@ -26,7 +26,6 @@ class ProductService {
     }
   }
 
-  // ⭐ VALIDATE CATEGORY
   private static async validateCategory(category: string) {
     if (!category) throw new BadRequestError("Category is required");
 
@@ -38,7 +37,6 @@ class ProductService {
     }
   }
 
-  // ⭐ UPDATE TSVECTOR FIELD (Reusable)
   private static async refreshSearchVector(productId: string) {
     await sql.unsafe(
       `
@@ -47,22 +45,26 @@ class ProductService {
         setweight(to_tsvector('english', coalesce(name, '')), 'A') ||
         setweight(to_tsvector('english', coalesce(description, '')), 'B') ||
         setweight(to_tsvector('english', array_to_string(tags, ' ')), 'A') ||
-        setweight(to_tsvector('english', array_to_string(highlights, ' ')), 'B')
+        setweight(to_tsvector('english', array_to_string(highlights, '')), 'B')
       WHERE id = $1
     `,
       [productId]
     );
   }
 
-  // ───────────────────────────────────────────────
-  // 🧾 PRODUCT FETCHING
-  // ───────────────────────────────────────────────
+  // ======================================================================
+  // FETCHING OPERATIONS (CACHED)
+  // ======================================================================
 
   static async getProduct(identifier: string): Promise<IProduct> {
     if (!identifier)
       throw new BadRequestError("Product identifier is required");
 
-    // Detect UUID using same regex as StoreService
+    const key = ServiceCache.key("product", "single", identifier);
+
+    const cached = await ServiceCache.get<IProduct>(key);
+    if (cached) return cached;
+
     const isUUID =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
         identifier
@@ -74,6 +76,7 @@ class ProductService {
 
     if (!product) throw new NotFoundError("Product not found");
 
+    await ServiceCache.set(key, product, 60);
     return product;
   }
 
@@ -81,8 +84,20 @@ class ProductService {
     filters: Partial<IProduct> = {},
     options: any = {}
   ) {
+    const key = ServiceCache.key("product", "list", { filters, options });
+
+    const cached = await ServiceCache.get<{
+      products: IProduct[];
+      pagination: any;
+    }>(key);
+    if (cached) return cached;
+
     const { data, pagination } = await ProductModel.findAll(filters, options);
-    return { pagination, products: data };
+
+    const response = { pagination, products: data };
+    await ServiceCache.set(key, response, 60);
+
+    return response;
   }
 
   static async getProductsByStore({
@@ -97,29 +112,40 @@ class ProductService {
   }) {
     if (!store_id) throw new BadRequestError("Store ID is required");
 
+    const key = ServiceCache.key("product", "store", { store_id, page, limit });
+
+    const cached = await ServiceCache.get<{
+      pagination: any;
+      products: IProduct[];
+    }>(key);
+    if (cached) return cached;
+
     const { data, pagination } = await ProductModel.findAll(
       { store_id },
       { page, limit }
     );
 
-    return { pagination, products: data };
+    const response = { pagination, products: data };
+    await ServiceCache.set(key, response, 60);
+
+    return response;
   }
 
-  // ───────────────────────────────────────────────
-  // 🔍 FULL TEXT SEARCH
-  // ───────────────────────────────────────────────
   static async search(q: string, page = 1, limit = 20) {
-    if (!q || q.trim() === "")
-      throw new BadRequestError("Search term is required");
+    if (!q.trim()) throw new BadRequestError("Search term is required");
+
+    const key = ServiceCache.key("product", "search", { q, page, limit });
+
+    const cached = await ServiceCache.get<any>(key);
+    if (cached) return cached;
 
     const offset = (page - 1) * limit;
 
     const tsQuery = q
       .split(" ")
-      .map((word) => `${word}:*`)
+      .map((w) => `${w}:*`)
       .join(" & ");
 
-    // MAIN SEARCH
     const products = await sql.unsafe<IProduct[]>(
       `
       SELECT *
@@ -131,7 +157,6 @@ class ProductService {
       [tsQuery, limit, offset]
     );
 
-    // COUNT RESULTS
     const [count] = await sql.unsafe<{ total: string }[]>(
       `
       SELECT COUNT(*) AS total
@@ -144,15 +169,19 @@ class ProductService {
     const total = Number(count.total);
     const total_pages = Math.ceil(total / limit);
 
-    return {
+    const response = {
       pagination: { page, limit, total, total_pages },
       products,
     };
+
+    await ServiceCache.set(key, response, 60);
+
+    return response;
   }
 
-  // ───────────────────────────────────────────────
-  // 🧱 CREATE / UPDATE / DELETE
-  // ───────────────────────────────────────────────
+  // ======================================================================
+  // CREATE / UPDATE / DELETE WITH CACHE INVALIDATION
+  // ======================================================================
 
   private static async generateUniqueSlug(name: string) {
     const baseSlug = slugify(name, { lower: true, strict: true });
@@ -166,7 +195,6 @@ class ProductService {
     return slug;
   }
 
-  // ➕ CREATE PRODUCT
   static async createProduct(
     data: Omit<IProduct, "id" | "created_at" | "updated_at">,
     files?: { image?: Express.Multer.File[]; gallery?: Express.Multer.File[] }
@@ -199,10 +227,11 @@ class ProductService {
 
     await this.refreshSearchVector(product.id);
 
+    await ServiceCache.clear("svc:product"); // invalidate all product caches
+
     return product;
   }
 
-  // ➕ CREATE PRODUCT FOR STORE
   static async createProductForStore(
     data: Omit<IProduct, "id" | "created_at" | "updated_at">,
     files?: { image?: Express.Multer.File[]; gallery?: Express.Multer.File[] }
@@ -248,10 +277,11 @@ class ProductService {
       updated_at: new Date().toISOString(),
     });
 
+    await ServiceCache.clear("svc:product");
+
     return product;
   }
 
-  // ✏️ UPDATE PRODUCT
   static async updateProduct(
     productId: string,
     updates: Partial<IProduct>,
@@ -260,13 +290,9 @@ class ProductService {
     const existing = await ProductModel.findById(productId);
     if (!existing) throw new NotFoundError("Product not found");
 
-    // Validate category + colors
     if (updates.category) await this.validateCategory(updates.category);
     if (updates.colors) await this.validateColors(updates.colors);
 
-    // --------------------------------------------
-    // 📸 Replace main image
-    // --------------------------------------------
     if (files?.image?.[0]) {
       if (existing.image?.public_id) {
         await UploadService.deleteSingle(existing.image.public_id);
@@ -278,22 +304,15 @@ class ProductService {
       );
     }
 
-    // --------------------------------------------
-    // 📸 Append gallery images (objects, NOT strings)
-    // --------------------------------------------
     if (files?.gallery?.length) {
       const newGallery = await UploadService.uploadMultiple(
         files.gallery,
         "easystore/products/gallery"
       );
 
-      // gallery items are objects → no trim()
       updates.gallery = [...(existing.gallery || []), ...newGallery];
     }
 
-    // --------------------------------------------
-    // 🔤 Append string-array fields ONLY
-    // --------------------------------------------
     const stringArrayFields: (keyof IProduct)[] = [
       "tags",
       "highlights",
@@ -305,7 +324,6 @@ class ProductService {
       const incoming = updates[field];
 
       if (incoming !== undefined && incoming !== null) {
-        // ensure array
         const parsedIncoming = Array.isArray(incoming)
           ? incoming
           : String(incoming)
@@ -314,42 +332,34 @@ class ProductService {
 
         const existingValues = (existing[field] as string[]) || [];
 
-        // merge + trim strings only
-        const merged = [...existingValues, ...parsedIncoming]
-          .map((x) => (typeof x === "string" ? x.trim() : x))
-          .filter((x) => typeof x === "string" && x.length > 0);
-
-        // ensure uniqueness
-        updates[field] = Array.from(new Set(merged)) as any;
+        updates[field] = Array.from(
+          new Set([...existingValues, ...parsedIncoming])
+        ) as any;
       }
     }
 
-    // --------------------------------------------
-    // 🔤 Update slug if name changed
-    // --------------------------------------------
     if (updates.name && updates.name !== existing.name) {
       updates.slug = await this.generateUniqueSlug(updates.name);
     }
 
-    // --------------------------------------------
-    // 💾 Save update
-    // --------------------------------------------
     const updated = await ProductModel.update(productId, {
       ...updates,
       updated_at: new Date().toISOString(),
     });
 
-    // Refresh search vector
     await this.refreshSearchVector(productId);
+
+    await ServiceCache.clear("svc:product");
 
     return updated;
   }
 
-  // ❌ DELETE PRODUCT
   static async deleteProduct(productId: string) {
     if (!productId) throw new BadRequestError("Product ID is required");
 
     await ProductModel.delete(productId);
+
+    await ServiceCache.clear("svc:product");
 
     return { success: true, message: "Product deleted successfully" };
   }
