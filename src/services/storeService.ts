@@ -15,11 +15,12 @@ import {
 import UploadService from "./uploadService.js";
 import { ICartItem } from "../config/db/models/CartModel.js";
 import { UserModel } from "../config/db/models/index.js";
+import { ServiceCache } from "../utils/helpers/ServiceCache.js";
 
 class StoreService {
-  // ───────────────────────────────────────────────
-  // 🔤 UNIQUE SLUG GENERATOR
-  // ───────────────────────────────────────────────
+  // --------------------------------------------------
+  // UNIQUE SLUG GENERATOR
+  // --------------------------------------------------
   private static async generateUniqueSlug(store_name: string): Promise<string> {
     const baseSlug = slugify(store_name, { lower: true, strict: true });
     let slug = baseSlug;
@@ -33,7 +34,9 @@ class StoreService {
     return slug;
   }
 
-  /** 🏬 Create a new store (vendor only) */
+  // --------------------------------------------------
+  // CREATE STORE (invalidate caches)
+  // --------------------------------------------------
   static async createStore(
     data: Omit<
       IStore,
@@ -42,7 +45,6 @@ class StoreService {
       | "category"
       | "logo_public_id"
       | "cover_image_public_id"
-      // | "email"
       | "phone_number"
       | "website"
       | "total_revenue"
@@ -81,16 +83,23 @@ class StoreService {
       analytics: { sales: [], orders: [], customers: [] },
     });
 
+    // invalidate caches
+    await ServiceCache.clear("svc:store");
+    await ServiceCache.clear("svc:store:list");
+    await ServiceCache.clear("svc:product");
+
     return store;
   }
 
-  // ───────────────────────────────────────────────
-  // 🧭 CATEGORY DERIVATION HELPER
-  // ───────────────────────────────────────────────
-
-  /** 🏷️ Get unique categories for a store (derived from its products) */
+  // --------------------------------------------------
+  // GET STORE CATEGORIES (CACHED)
+  // --------------------------------------------------
   static async getStoreCategories(storeId: string): Promise<string[]> {
     if (!storeId) throw new BadRequestError("Store ID is required");
+
+    const key = ServiceCache.key("store", "categories", storeId);
+    const cached = await ServiceCache.get<string[]>(key);
+    if (cached) return cached;
 
     const products = await ProductModel.findSelected(
       ["category"],
@@ -102,18 +111,23 @@ class StoreService {
       new Set(products.data.map((p: any) => p.category).filter(Boolean))
     );
 
+    await ServiceCache.set(key, categories);
+
     return categories;
   }
 
-  // ───────────────────────────────────────────────
-  // 📄 GET SINGLE STORE (BY ID OR USERNAME)
-  // ───────────────────────────────────────────────
+  // --------------------------------------------------
+  // GET STORE (ID OR SLUG) — CACHED
+  // --------------------------------------------------
   static async getStore(
     identifier: string
   ): Promise<IStore & { categories: string[] }> {
     if (!identifier) throw new BadRequestError("Store identifier required");
 
-    // ✅ Detect if identifier is UUID or username
+    const key = ServiceCache.key("store", "one", identifier);
+    const cached = await ServiceCache.get<any>(key);
+    if (cached) return cached;
+
     const isUUID =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
         identifier
@@ -126,14 +140,21 @@ class StoreService {
     if (!store) throw new NotFoundError("Store not found");
 
     const categories = await StoreService.getStoreCategories(store.id);
+    const result = { ...store, categories };
 
-    return { ...store, categories };
+    await ServiceCache.set(key, result);
+
+    return result;
   }
 
-  // ───────────────────────────────────────────────
-  // 🧾 GET ALL STORES (WITH LIMITED FIELDS + CATEGORIES)
-  // ───────────────────────────────────────────────
+  // --------------------------------------------------
+  // GET ALL STORES (CACHED)
+  // --------------------------------------------------
   static async getAllStores(page = 1, limit = 20) {
+    const key = ServiceCache.key("store", "list", `${page}-${limit}`);
+    const cached = await ServiceCache.get<any>(key);
+    if (cached) return cached;
+
     const { data: stores, pagination } = await StoreModel.findSelected(
       [
         "id",
@@ -156,13 +177,21 @@ class StoreService {
       })
     );
 
-    return { pagination, stores: enrichedStores };
+    const result = { pagination, stores: enrichedStores };
+
+    await ServiceCache.set(key, result);
+
+    return result;
   }
 
-  // ───────────────────────────────────────────────
-  // 🧾 GET ALL STORES (ADMIN — FULL DETAILS)
-  // ───────────────────────────────────────────────
+  // --------------------------------------------------
+  // GET ALL STORES (ADMIN — FULL DETAILS) — CACHED
+  // --------------------------------------------------
   static async getAllStoresAdmin(page = 1, limit = 20) {
+    const key = ServiceCache.key("store", "admin-list", `${page}-${limit}`);
+    const cached = await ServiceCache.get<any>(key);
+    if (cached) return cached;
+
     const { data: stores, pagination } = await StoreModel.findAll(
       {},
       { page, limit }
@@ -175,43 +204,52 @@ class StoreService {
       })
     );
 
-    return {
-      pagination,
-      data: enrichedStores,
-    };
+    const result = { pagination, data: enrichedStores };
+    await ServiceCache.set(key, result);
+
+    return result;
   }
 
-  // ───────────────────────────────────────────────
-  // 🧭 GET STORE PRODUCTS
-  // ───────────────────────────────────────────────
-
+  // --------------------------------------------------
+  // GET STORE PRODUCTS (CACHED)
+  // --------------------------------------------------
   static async getStoreProducts(identifier: string, page = 1, limit = 20) {
     if (!identifier) throw new BadRequestError("Store identifier is required");
+
+    const key = ServiceCache.key(
+      "store",
+      "products",
+      `${identifier}-${page}-${limit}`
+    );
+
+    const cached = await ServiceCache.get<any>(key);
+    if (cached) return cached;
 
     const isUUID =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
         identifier
       );
 
-    // Find store by ID or slug
     const store = isUUID
       ? await StoreModel.findOne({ id: identifier })
       : await StoreModel.findOne({ slug: identifier });
 
     if (!store) throw new NotFoundError("Store not found");
 
-    // Fetch products for that store
     const { data, pagination } = await ProductModel.findAll(
       { store_id: store.id },
       { page, limit }
     );
 
-    return { pagination, products: data };
+    const result = { pagination, products: data };
+    await ServiceCache.set(key, result);
+
+    return result;
   }
-  // ───────────────────────────────────────────────
-  // ✏️ UPDATE STORE
-  // ───────────────────────────────────────────────
-  // inside StoreService
+
+  // --------------------------------------------------
+  // UPDATE STORE (CLEAR CACHE)
+  // --------------------------------------------------
   static async updateStore(
     storeId: string,
     data: Record<string, any>,
@@ -245,9 +283,7 @@ class StoreService {
       if (data[key] !== undefined) filtered[key] = data[key];
     }
 
-    // ---------------------------
-    // 📸 Handle Logo Upload
-    // ---------------------------
+    // LOGO UPLOAD
     if (files?.logo) {
       const logoUpload = await UploadService.uploadSingle(
         files.logo,
@@ -262,9 +298,7 @@ class StoreService {
       }
     }
 
-    // ---------------------------
-    // 📸 Handle Cover Image Upload
-    // ---------------------------
+    // COVER UPLOAD
     if (files?.cover_image) {
       const coverUpload = await UploadService.uploadSingle(
         files.cover_image,
@@ -279,7 +313,7 @@ class StoreService {
       }
     }
 
-    // If store_name changed → regenerate slug
+    // RENAME SLUG IF store_name changed
     if (
       filtered.store_name &&
       filtered.store_name.toLowerCase() !==
@@ -301,12 +335,19 @@ class StoreService {
       updated_at: new Date().toISOString(),
     });
 
+    // CLEAR ALL CACHES SINCE STORE DETAILS CHANGED
+    await ServiceCache.clear("svc:store");
+    await ServiceCache.clear("svc:store:list");
+    await ServiceCache.clear("svc:store:categories");
+    await ServiceCache.clear("svc:store:products");
+    await ServiceCache.clear("svc:store:analytics");
+
     return updated;
   }
 
-  // ───────────────────────────────────────────────
-  // ❌ DELETE STORE
-  // ───────────────────────────────────────────────
+  // --------------------------------------------------
+  // DELETE STORE (CLEAR CACHE)
+  // --------------------------------------------------
   static async deleteStore(storeId: string) {
     if (!storeId) throw new BadRequestError("Store ID is required");
 
@@ -314,6 +355,13 @@ class StoreService {
     if (!existing) throw new NotFoundError("Store not found");
 
     await StoreModel.delete(storeId);
+
+    await ServiceCache.clear("svc:store");
+    await ServiceCache.clear("svc:store:list");
+    await ServiceCache.clear("svc:store:categories");
+    await ServiceCache.clear("svc:store:products");
+    await ServiceCache.clear("svc:store:analytics");
+
     return { success: true, message: "Store deleted successfully" };
   }
 
@@ -323,87 +371,9 @@ class StoreService {
     return existing ? true : false;
   }
 
-  // ───────────────────────────────────────────────
-  // 📊 UPDATE ANALYTICS
-  // ───────────────────────────────────────────────
-  // static async updateStoreAnalytics(
-  //   storeId: string,
-  //   amount: number,
-  //   customerId?: string
-  // ) {
-  //   const store = await StoreModel.findById(storeId);
-  //   if (!store) throw new NotFoundError("Store not found");
-
-  //   const now = new Date();
-  //   const monthNames = [
-  //     "Jan",
-  //     "Feb",
-  //     "Mar",
-  //     "Apr",
-  //     "May",
-  //     "Jun",
-  //     "Jul",
-  //     "Aug",
-  //     "Sep",
-  //     "Oct",
-  //     "Nov",
-  //     "Dec",
-  //   ];
-  //   const month = monthNames[now.getMonth()];
-  //   const year = now.getFullYear();
-
-  //   const analytics = store.analytics || {
-  //     sales: [],
-  //     orders: [],
-  //     customers: [],
-  //   };
-
-  //   const findRec = (arr: any[]) =>
-  //     arr.find((r) => r.month === month && r.year === year);
-
-  //   // SALES
-  //   const salesRec = findRec(analytics.sales);
-  //   if (salesRec) salesRec.amount += amount;
-  //   else analytics.sales.push({ month, year, amount });
-
-  //   // ORDERS
-  //   const orderRec = findRec(analytics.orders);
-  //   if (orderRec) orderRec.count += 1;
-  //   else analytics.orders.push({ month, year, count: 1 });
-
-  //   // CUSTOMERS
-  //   if (customerId) {
-  //     const custRec = findRec(analytics.customers);
-
-  //     if (custRec) {
-  //       if (!custRec.list.includes(customerId)) {
-  //         custRec.list.push(customerId);
-  //         custRec.count += 1;
-  //       }
-  //     } else {
-  //       analytics.customers.push({
-  //         month,
-  //         year,
-  //         count: 1,
-  //         list: [customerId],
-  //       });
-  //     }
-  //   }
-
-  //   const uniqueCustomers = new Set(analytics.customers.flatMap((c) => c.list))
-  //     .size;
-
-  //   await StoreModel.update(storeId, {
-  //     analytics,
-  //     total_revenue: Number(store.total_revenue || 0) + amount,
-  //     total_orders: Number(store.total_orders || 0) + 1,
-  //     active_customers: uniqueCustomers,
-  //     updated_at: new Date().toISOString(),
-  //   });
-
-  //   return analytics;
-  // }
-
+  // --------------------------------------------------
+  // UPDATE STORE ANALYTICS (CLEAR CACHE)
+  // --------------------------------------------------
   static async updateStoreAnalytics(
     storeId: string,
     amount: number,
@@ -444,25 +414,18 @@ class StoreService {
     const findRec = (arr: any[]) =>
       arr.find((r) => r.month === month && r.year === year);
 
-    // --------------------------------------
-    // ⭐ SALES
-    // --------------------------------------
+    // SALES
     const salesRec = findRec(analytics.sales);
     if (salesRec) salesRec.amount += amount;
     else analytics.sales.push({ month, year, amount });
 
-    // --------------------------------------
-    // ⭐ ORDERS COUNT
-    // --------------------------------------
+    // ORDERS
     const orderRec = findRec(analytics.orders);
     if (orderRec) orderRec.count += 1;
     else analytics.orders.push({ month, year, count: 1 });
 
-    // --------------------------------------
-    // ⭐ UNIQUE MONTHLY CUSTOMERS
-    // --------------------------------------
+    // CUSTOMERS (monthly unique)
     const custRec = findRec(analytics.customers);
-
     if (custRec) {
       if (!custRec.list.includes(customerId)) {
         custRec.list.push(customerId);
@@ -477,9 +440,7 @@ class StoreService {
       });
     }
 
-    // --------------------------------------
-    // ⭐ UPDATE STORE CUSTOMER LIST
-    // --------------------------------------
+    // UPDATE CUSTOMER LIST
     const customer = await UserModel.findById(customerId).catch(() => null);
 
     const fullCustomerName = `${customer?.first_name ?? ""} ${
@@ -492,16 +453,13 @@ class StoreService {
       customer?.address?.country ||
       null;
 
-    // Check if customer already in store.customers
     const existingCustomer = customers.find((c) => c.id === customerId);
 
     if (existingCustomer) {
-      // Update previous record
       existingCustomer.orders += 1;
       existingCustomer.spent += amount;
       existingCustomer.last_order_date = today;
     } else {
-      // Create new customer record
       customers.push({
         id: customerId,
         name: fullCustomerName,
@@ -510,17 +468,13 @@ class StoreService {
         location,
         orders: 1,
         spent: amount,
-        rating: 0, // optional for later
+        rating: 0,
         last_order_date: today,
       });
     }
 
-    // Unique customers count
     const uniqueCustomers = customers.length;
 
-    // --------------------------------------
-    // ⭐ Save Store
-    // --------------------------------------
     await StoreModel.update(storeId, {
       analytics,
       customers,
@@ -530,26 +484,33 @@ class StoreService {
       updated_at: new Date().toISOString(),
     });
 
+    // CLEAR ONLY ANALYTICS + STORE (details)
+    await ServiceCache.clear("svc:store:analytics");
+    await ServiceCache.clear("svc:store");
+    await ServiceCache.clear("svc:store:list");
+
     return analytics;
   }
 
-  // ───────────────────────────────────────────────
-  // 📈 GET DASHBOARD ANALYTICS
-  // ───────────────────────────────────────────────
+  // --------------------------------------------------
+  // GET ANALYTICS (CACHED)
+  // --------------------------------------------------
   static async getAnalytics(storeId: string, userId: string, role: string) {
     if (!storeId) throw new BadRequestError("Store ID is required");
+
+    const key = ServiceCache.key("store", "analytics", storeId);
+    const cached = await ServiceCache.get<any>(key);
+    if (cached) return cached;
 
     const store = await StoreModel.findById(storeId);
     if (!store) throw new NotFoundError("Store not found");
 
-    // 🛑 Vendor can only see analytics for their own store
     if (role === "vendor" && store.user_id !== userId) {
       throw new BadRequestError(
         "You are not allowed to view this store's analytics"
       );
     }
 
-    // Ensure analytics + customers exist
     const analytics: IAnalytics = store.analytics || {
       sales: [],
       orders: [],
@@ -558,9 +519,6 @@ class StoreService {
 
     const customers: IStoreCustomer[] = store.customers || [];
 
-    // ─────────────────────────────────────────────
-    // 📊 SUMMARY METRICS
-    // ─────────────────────────────────────────────
     const totalSales = store.total_revenue || 0;
     const totalOrders = store.total_orders || 0;
     const totalCustomers = store.active_customers || 0;
@@ -569,10 +527,6 @@ class StoreService {
       totalCustomers > 0
         ? parseFloat(((totalOrders / totalCustomers) * 100).toFixed(1))
         : 0;
-
-    // ─────────────────────────────────────────────
-    // 📈 SORT MONTHLY SALES FOR GRAPH
-    // ─────────────────────────────────────────────
 
     const monthOrder = [
       "Jan",
@@ -598,33 +552,20 @@ class StoreService {
     const lastMonth = sortedSales[sortedSales.length - 2];
     const thisMonth = sortedSales[sortedSales.length - 1];
 
-    const getChange = (current: number, previous: number) =>
-      previous
-        ? parseFloat((((current - previous) / previous) * 100).toFixed(1))
-        : 0;
+    const getChange = (cur: number, prev: number) =>
+      prev ? parseFloat((((cur - prev) / prev) * 100).toFixed(1)) : 0;
 
     const salesChange =
       lastMonth && thisMonth
         ? getChange(thisMonth.amount, lastMonth.amount)
         : 0;
 
-    // ─────────────────────────────────────────────
-    // ⭐ TOP PRODUCTS (Require total_sold on product table)
-    // ─────────────────────────────────────────────
-
     const { data: topProducts } = await ProductModel.findAll(
       { store_id: storeId },
-      {
-        page: 1,
-        limit: 10,
-        orderBy: "total_sold DESC",
-      }
+      { page: 1, limit: 10, orderBy: "total_sold DESC" }
     );
 
-    // ─────────────────────────────────────────────
-    // ⭐ FINAL RESPONSE
-    // ─────────────────────────────────────────────
-    return {
+    const result = {
       summary: {
         total_sales: totalSales,
         orders: totalOrders,
@@ -635,23 +576,23 @@ class StoreService {
         customers_change: 0,
         conversion_rate_change: 0,
       },
-
       chart: {
         sales_trend: sortedSales,
         orders_trend: analytics.orders || [],
         customers_trend: analytics.customers || [],
       },
-
       top_products: topProducts,
-
-      customers, // ⭐ FULL CUSTOMER LIST (IStoreCustomer[])
-      analytics, // ⭐ FULL RAW ANALYTICS
+      customers,
+      analytics,
     };
+
+    await ServiceCache.set(key, result);
+    return result;
   }
 
-  // ───────────────────────────────────────────────
-  // 🏦 BANK ACCOUNT MANAGEMENT
-  // ───────────────────────────────────────────────
+  // --------------------------------------------------
+  // BANK ACCOUNT MANAGEMENT — with cache invalidation
+  // --------------------------------------------------
   static async registerBankAccount(
     storeId: string,
     bank_code: string,
@@ -684,6 +625,10 @@ class StoreService {
       updated_at: new Date().toISOString(),
     });
 
+    // CLEAR store caches
+    await ServiceCache.clear("svc:store");
+    await ServiceCache.clear("svc:store:list");
+
     return {
       success: true,
       message: "Bank account registered successfully",
@@ -691,9 +636,9 @@ class StoreService {
     };
   }
 
-  // ───────────────────────────────────────────────
-  // 🏦 UPDATE BANK ACCOUNT (strict verification)
-  // ───────────────────────────────────────────────
+  // --------------------------------------------------
+  // UPDATE BANK ACCOUNT — strict verification
+  // --------------------------------------------------
   static async updateBankAccount(
     storeId: string,
     updates: {
@@ -709,12 +654,10 @@ class StoreService {
 
     const { account_number, bank_code, settlement_email } = updates;
 
-    // ✅ Require at least one field to change
     if (!account_number && !bank_code && !settlement_email) {
       throw new BadRequestError("No bank details provided for update");
     }
 
-    // ✅ Re-verify only if bank_code or account_number is changing
     let verifiedAccount = null;
     let recipient_code = store.recipient_code;
     let bank_name = store.bank_name;
@@ -733,15 +676,12 @@ class StoreService {
         );
       }
 
-      // ✅ Verify bank account with Paystack
       verifiedAccount = await verifyBankAccount(acctNum, bCode);
 
       if (!verifiedAccount?.account_name) {
-        // ❌ Reject update if verification fails
         throw new BadRequestError("Bank verification failed — invalid details");
       }
 
-      // ✅ Create new Paystack transfer recipient
       recipient_code = await createTransferRecipient({
         name: verifiedAccount.account_name,
         account_number: acctNum,
@@ -751,7 +691,6 @@ class StoreService {
       bank_name = verifiedAccount.bank_name || verifiedAccount.account_name;
     }
 
-    // ✅ Only update if verified OR if just settlement_email changed
     if (bankDetailsChanged && !verifiedAccount) {
       throw new BadRequestError("Cannot update — bank verification required");
     }
@@ -766,6 +705,10 @@ class StoreService {
       updated_at: new Date().toISOString(),
     });
 
+    // CLEAR store caches
+    await ServiceCache.clear("svc:store");
+    await ServiceCache.clear("svc:store:list");
+
     return {
       success: true,
       message: verifiedAccount
@@ -776,6 +719,9 @@ class StoreService {
     };
   }
 
+  // --------------------------------------------------
+  // DELETE BANK ACCOUNT — with cache invalidation
+  // --------------------------------------------------
   static async deleteBankAccount(storeId: string) {
     const store = await StoreModel.findById(storeId);
     if (!store) throw new NotFoundError("Store not found");
@@ -789,6 +735,10 @@ class StoreService {
       payout_verified: false,
       updated_at: new Date().toISOString(),
     });
+
+    // CLEAR store caches
+    await ServiceCache.clear("svc:store");
+    await ServiceCache.clear("svc:store:list");
 
     return {
       success: true,

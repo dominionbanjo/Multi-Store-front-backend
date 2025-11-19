@@ -12,10 +12,8 @@ import { UserModel } from "../config/db/models/UserModel.js";
 import { EscrowModel } from "../config/db/models/EscrowModel.js";
 import StoreService from "./storeService.js";
 import UploadService from "./uploadService.js";
+import { ServiceCache } from "../utils/helpers/ServiceCache.js";
 
-/**
- * 🚚 Delivery Service (Idempotent + Full Mail Notifications)
- */
 export class DeliveryService {
   /* -------------------------------------------------------------------------- */
   /*                               1. CREATE DELIVERY                           */
@@ -38,20 +36,29 @@ export class DeliveryService {
     if (!order_id || !buyer_id || !vendor_id)
       throw new BadRequestError("Missing required delivery fields");
 
-    // 🔁 Idempotent — delivery already exists
-    const existing = await DeliveryModel.findOne({ order_id });
-    if (existing) return existing;
+    // Try to get from cache first
+    const orderKey = ServiceCache.key("delivery", "order", order_id);
+    const cached = await ServiceCache.get<IDelivery>(orderKey);
+    if (cached) return cached;
 
-    // 🧾 Fetch order to extract items
+    // Idempotent behavior
+    const existing = await DeliveryModel.findOne({ order_id });
+    if (existing) {
+      await ServiceCache.set(orderKey, existing);
+      await ServiceCache.set(
+        ServiceCache.key("delivery", "single", existing.id),
+        existing
+      );
+      return existing;
+    }
+
     const order = await OrderModel.findById(order_id);
     if (!order) throw new NotFoundError("Order not found");
 
-    // 🔎 Fetch buyer + address
     const buyer = await UserModel.findById(buyer_id);
     if (!buyer) throw new BadRequestError("Buyer not found");
 
     const addr = buyer.address || {};
-
     const now = new Date().toISOString();
 
     const delivery = await DeliveryModel.create({
@@ -60,11 +67,8 @@ export class DeliveryService {
       buyer_id,
       vendor_id,
       courier_id: data.courier_id ?? null,
-
-      // 🛍 Store snapshot of the order items
       order_items: order.order_items,
 
-      // 🏠 Auto-fill from buyer profile unless provided
       address: data.address ?? addr.street ?? null,
       city: data.city ?? addr.city ?? null,
       state: data.state ?? addr.state ?? null,
@@ -82,7 +86,14 @@ export class DeliveryService {
       updated_at: now,
     });
 
-    // Notify buyer + vendor
+    // Cache after create
+    await ServiceCache.set(orderKey, delivery);
+    await ServiceCache.set(
+      ServiceCache.key("delivery", "single", delivery.id),
+      delivery
+    );
+
+    // Mails
     const vendor = await UserModel.findById(vendor_id);
 
     if (buyer?.email) {
@@ -105,11 +116,18 @@ export class DeliveryService {
   }
 
   /* -------------------------------------------------------------------------- */
-  /*                               2. GET DELIVERY                              */
+  /*                               2. GET DELIVERY (CACHED)                     */
   /* -------------------------------------------------------------------------- */
   static async getDelivery(id: string): Promise<IDelivery> {
+    const key = ServiceCache.key("delivery", "single", id);
+
+    const cached = await ServiceCache.get<IDelivery>(key);
+    if (cached) return cached;
+
     const delivery = await DeliveryModel.findById(id);
     if (!delivery) throw new NotFoundError("Delivery not found");
+
+    await ServiceCache.set(key, delivery);
     return delivery;
   }
 
@@ -127,6 +145,9 @@ export class DeliveryService {
       delivery_status: "assigned",
       updated_at: new Date().toISOString(),
     });
+
+    // Invalidate all delivery caches
+    await ServiceCache.clear("svc:delivery");
 
     const order = await OrderModel.findById(delivery.order_id);
     const buyer = await UserModel.findById(order.buyer_id);
@@ -165,7 +186,7 @@ export class DeliveryService {
     const delivery = await DeliveryModel.findById(delivery_id);
     if (!delivery) throw new NotFoundError("Delivery not found");
 
-    // 🚫 Ensure only vendor and admin can update status
+    // Only vendor/admin
     if (delivery.vendor_id !== userId && role !== "admin") {
       throw new BadRequestError(
         "Only the assigned vendor can update delivery status"
@@ -173,12 +194,6 @@ export class DeliveryService {
     }
 
     const order = await OrderModel.findById(delivery.order_id);
-
-    if (status === "confirmed") {
-      throw new BadRequestError(
-        "Only the vendor confirmation process can set status to confirmed"
-      );
-    }
 
     const FLOW: DeliveryStatus[] = [
       "pending",
@@ -192,6 +207,12 @@ export class DeliveryService {
 
     const currentIndex = FLOW.indexOf(delivery.delivery_status);
     const newIndex = FLOW.indexOf(status);
+
+    if (status === "confirmed") {
+      throw new BadRequestError(
+        "Only the vendor confirmation process can set status to confirmed"
+      );
+    }
 
     if (newIndex < currentIndex && !["failed", "returned"].includes(status)) {
       throw new BadRequestError(
@@ -207,10 +228,14 @@ export class DeliveryService {
       };
     }
 
+    // Update status
     await DeliveryModel.update(delivery_id, {
       delivery_status: status,
       updated_at: new Date().toISOString(),
     });
+
+    // Invalidate all cached deliveries
+    await ServiceCache.clear("svc:delivery");
 
     const buyer = await UserModel.findById(order.buyer_id);
     const vendor = await UserModel.findById(order.vendor_id);
@@ -262,7 +287,7 @@ export class DeliveryService {
   }
 
   /* -------------------------------------------------------------------------- */
-  /*        5. CONFIRM DELIVERY (TRIGGERED BY VENDOR WITH BUYER'S CODE)         */
+  /*                       5. CONFIRM DELIVERY (PAY ESCROW)                     */
   /* -------------------------------------------------------------------------- */
   static async confirmDelivery(
     order_id: string,
@@ -272,7 +297,6 @@ export class DeliveryService {
     const order = await OrderModel.findById(order_id);
     if (!order) throw new NotFoundError("Order not found");
 
-    // vendor must be the one confirming delivery
     if (vendor_user !== order.vendor_id) {
       throw new BadRequestError("Only vendor can confirm delivery");
     }
@@ -294,6 +318,9 @@ export class DeliveryService {
       updated_at: new Date().toISOString(),
     });
 
+    // Invalidate all delivery caches
+    await ServiceCache.clear("svc:delivery");
+
     const buyer = await UserModel.findById(order.buyer_id);
     const vendor = await UserModel.findById(order.vendor_id);
 
@@ -313,46 +340,42 @@ export class DeliveryService {
       });
     }
 
-    // vendor provides code buyer gave them
     return await EscrowService.releaseEscrow(order_id, code, order.buyer_id);
   }
 
   /* -------------------------------------------------------------------------- */
   /*                           6. UPLOAD PROOF                                  */
   /* -------------------------------------------------------------------------- */
-
   static async uploadProof(delivery_id: string, file?: Express.Multer.File) {
     if (!file) throw new BadRequestError("Proof image is required");
 
     const delivery = await DeliveryModel.findById(delivery_id);
     if (!delivery) throw new NotFoundError("Delivery not found");
 
-    // Upload new proof
     const uploaded = await UploadService.uploadSingle(
       file,
       "easystore/delivery-proofs"
     );
 
-    if (!uploaded?.url) {
+    if (!uploaded?.url)
       throw new BadRequestError("Failed to upload delivery proof");
-    }
 
     // Delete old proof if exists
-    if (delivery.proof_of_delivery_url) {
-      const publicId = delivery.proof_of_delivery_url_public_id;
-      if (publicId) {
-        await UploadService.deleteSingle(publicId);
-      }
+    if (delivery.proof_of_delivery_url_public_id) {
+      await UploadService.deleteSingle(
+        delivery.proof_of_delivery_url_public_id
+      );
     }
 
-    // Save new proof
     const updated = await DeliveryModel.update(delivery_id, {
       proof_of_delivery_url: uploaded.url,
       proof_of_delivery_url_public_id: uploaded.public_id,
       updated_at: new Date().toISOString(),
     });
 
-    // Notify buyer that proof was uploaded
+    // Invalidate cache
+    await ServiceCache.clear("svc:delivery");
+
     const order = await OrderModel.findById(delivery.order_id);
     const buyer = await UserModel.findById(order.buyer_id);
 

@@ -5,9 +5,12 @@ import {
   ProductReviewModel,
 } from "../config/db/models/ReviewModel.js";
 import { BadRequestError, NotFoundError } from "../utils/errors/customError.js";
+import { ServiceCache } from "../utils/helpers/ServiceCache.js";
 
 class ReviewService {
-  // ➕ Add a new product review
+  /* -------------------------------------------------------------------------- */
+  /* ➕ Add a new product review                                                */
+  /* -------------------------------------------------------------------------- */
   static async addReview(data: {
     product_id: string;
     user_id: string;
@@ -43,11 +46,19 @@ class ReviewService {
       updated_at: new Date().toISOString(),
     });
 
+    // Update product rating values
     await this.updateProductRatings(product_id);
+
+    // Invalidate review cache and product cache
+    await ServiceCache.clear("svc:review");
+    await ServiceCache.clear("svc:product");
+
     return review;
   }
 
-  // 🧮 Sync product rating with review averages
+  /* -------------------------------------------------------------------------- */
+  /* 🧮 Sync product rating with review averages                                */
+  /* -------------------------------------------------------------------------- */
   static async updateProductRatings(productId: string) {
     const { data: reviews } = await ProductReviewModel.findAll({
       product_id: productId,
@@ -70,24 +81,41 @@ class ReviewService {
       updated_at: new Date().toISOString(),
     });
 
+    // Clear product caches since rating changed
+    await ServiceCache.clear("svc:product");
+
     return { rating_average: average, rating_count: reviewCount };
   }
 
-  // 🧾 Fetch all reviews for a product
+  /* -------------------------------------------------------------------------- */
+  /* 🧾 Fetch all reviews for a product (CACHED)                                */
+  /* -------------------------------------------------------------------------- */
   static async getReviews(productId: string) {
     if (!productId) throw new BadRequestError("Product ID is required");
+
+    const key = ServiceCache.key("review", "list", productId);
+
+    const cached = await ServiceCache.get<IProductReview[]>(key);
+    if (cached) return cached;
 
     const { data } = await ProductReviewModel.findAll({
       product_id: productId,
     });
-    return data.sort(
+
+    const sorted = data.sort(
       (a, b) =>
         new Date(b.created_at ?? "").getTime() -
         new Date(a.created_at ?? "").getTime()
     );
+
+    await ServiceCache.set(key, sorted);
+
+    return sorted;
   }
 
-  // ❌ Delete a review
+  /* -------------------------------------------------------------------------- */
+  /* ❌ Delete a review                                                         */
+  /* -------------------------------------------------------------------------- */
   static async deleteReview(reviewId: string) {
     if (!reviewId) throw new BadRequestError("Review ID is required");
 
@@ -95,7 +123,13 @@ class ReviewService {
     if (!review) throw new NotFoundError("Review not found");
 
     await ProductReviewModel.delete(reviewId);
+
+    // Update product rating after deletion
     await this.updateProductRatings(review.product_id);
+
+    // Clear caches
+    await ServiceCache.clear("svc:review");
+    await ServiceCache.clear("svc:product");
 
     return { success: true, message: "Review deleted successfully" };
   }

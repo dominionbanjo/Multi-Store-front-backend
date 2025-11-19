@@ -7,6 +7,7 @@ import {
   createTransferRecipient,
   verifyBankAccount,
 } from "../utils/payment/paystack.js";
+import { ServiceCache } from "../utils/helpers/ServiceCache.js";
 
 /**
  * 👤 UserService
@@ -23,18 +24,27 @@ class UserService {
   // 📄 USER PROFILE
   // ───────────────────────────────────────────────
 
-  /** 🧩 Get a user profile by ID */
+  /** 🧩 Get a user profile by ID (CACHED) */
   static async getProfile(userId: string) {
     if (!userId) throw new BadRequestError("User ID is required");
+
+    const key = ServiceCache.key("user", "profile", userId);
+    const cached = await ServiceCache.get<IUser>(key);
+    if (cached) {
+      // ensure password not leaked if it exists in cache
+      if ((cached as any).password) delete (cached as any).password;
+      return cached;
+    }
 
     const user = await UserModel.findById(userId);
     if (!user) throw new NotFoundError("User not found");
 
     delete (user as any).password;
+    await ServiceCache.set(key, user);
     return user;
   }
 
-  /** ✏️ Update user profile (with whitelisted fields only) */
+  /** ✏️ Update user profile (with whitelisted fields only) → INVALIDATE CACHE */
   static async updateProfile(
     userId: string,
     data: Record<string, any>,
@@ -83,6 +93,8 @@ class UserService {
       updated_at: new Date().toISOString(),
     });
 
+    // Invalidate user cache namespace
+    await ServiceCache.clear("svc:user");
     delete (updated as any).password;
     return updated;
   }
@@ -91,13 +103,23 @@ class UserService {
   // 👥 ADMIN: GET ALL USERS
   // ───────────────────────────────────────────────
 
-  /** 🧾 Get all users (admin only, paginated + selected fields) */
+  /** 🧾 Get all users (admin only, paginated + selected fields) (CACHED per page/limit) */
   static async getAllUsers(
     options: { page?: number; limit?: number } = {}
   ): Promise<{
     users: Partial<IUser>[];
     pagination: { page: number; limit: number; total: number };
   }> {
+    const page = options.page ?? 1;
+    const limit = options.limit ?? 25;
+    const key = ServiceCache.key("user", "all", `${page}-${limit}`);
+
+    const cached = await ServiceCache.get<{
+      users: Partial<IUser>[];
+      pagination: { page: number; limit: number; total: number };
+    }>(key);
+    if (cached) return cached;
+
     const selectedFields: (keyof IUser)[] = [
       "id",
       "first_name",
@@ -117,28 +139,41 @@ class UserService {
       options
     );
 
-    return { pagination, users: data };
+    const result = { pagination, users: data };
+    await ServiceCache.set(key, result);
+    return result;
   }
 
   // ───────────────────────────────────────────────
   // 🏪 STORE MANAGEMENT
   // ───────────────────────────────────────────────
 
-  /** 🏬 Get all stores belonging to a user */
+  /** 🏬 Get all stores belonging to a user (CACHED) */
   static async getStores(userId: string): Promise<IStore[]> {
     if (!userId) throw new BadRequestError("User ID is required");
 
+    const key = ServiceCache.key("user", "stores", userId);
+    const cached = await ServiceCache.get<IStore[]>(key);
+    if (cached) return cached;
+
     const { data } = await StoreModel.findAll({ user_id: userId });
-    return data.sort(
+    const sorted = data.sort(
       (a, b) =>
         new Date(b.created_at ?? "").getTime() -
         new Date(a.created_at ?? "").getTime()
     );
+
+    await ServiceCache.set(key, sorted);
+    return sorted;
   }
 
-  /** 🧭 Get a user and all their linked stores */
+  /** 🧭 Get a user and all their linked stores (CACHED) */
   static async getUserWithStore(userId: string) {
     if (!userId) throw new BadRequestError("User ID is required");
+
+    const key = ServiceCache.key("user", "withstore", userId);
+    const cached = await ServiceCache.get<any>(key);
+    if (cached) return cached;
 
     const user = await UserModel.findById(userId);
     if (!user) throw new NotFoundError("User not found");
@@ -148,7 +183,9 @@ class UserService {
     });
 
     delete (user as any).password;
-    return { pagination, ...user, stores };
+    const result = { pagination, ...user, stores };
+    await ServiceCache.set(key, result);
+    return result;
   }
 
   // ───────────────────────────────────────────────
@@ -158,6 +195,7 @@ class UserService {
   /**
    * 🧮 Recalculate a vendor’s (user’s) rating based on all their products
    * This should be called after product ratings are updated.
+   * After updating user record we invalidate user cache namespace.
    */
   static async updateVendorRatings(vendorId: string) {
     if (!vendorId) throw new BadRequestError("Vendor ID is required");
@@ -175,6 +213,10 @@ class UserService {
         review_count: 0,
         updated_at: new Date().toISOString(),
       });
+
+      // Invalidate user cache namespace
+      await ServiceCache.clear("svc:user");
+
       return { rating_average: 0, review_count: 0 };
     }
 
@@ -202,6 +244,9 @@ class UserService {
       updated_at: new Date().toISOString(),
     });
 
+    // Invalidate user cache namespace
+    await ServiceCache.clear("svc:user");
+
     return { rating_average: vendorAverage, review_count: totalReviews };
   }
 
@@ -209,7 +254,7 @@ class UserService {
   // ⚙️ ADMIN OPERATIONS
   // ───────────────────────────────────────────────
 
-  /** 🗑️ Delete a user and cascade all related entities */
+  /** 🗑️ Delete a user and cascade all related entities → INVALIDATE CACHE */
   static async deleteUser(userId: string) {
     if (!userId) throw new BadRequestError("User ID is required");
 
@@ -218,6 +263,9 @@ class UserService {
 
     // Cascading deletion logic could be extended here if needed
     await UserModel.delete(userId);
+
+    // Invalidate user cache namespace
+    await ServiceCache.clear("svc:user");
 
     return { success: true, message: "User deleted successfully" };
   }
@@ -257,6 +305,9 @@ class UserService {
       settlement_email: settlement_email || user.settlement_email,
       updated_at: new Date().toISOString(),
     });
+
+    // Invalidate user cache namespace
+    await ServiceCache.clear("svc:user");
 
     return {
       success: true,
@@ -329,6 +380,9 @@ class UserService {
       updated_at: new Date().toISOString(),
     });
 
+    // Invalidate user cache namespace
+    await ServiceCache.clear("svc:user");
+
     return {
       success: true,
       message: verifiedAccount
@@ -356,6 +410,9 @@ class UserService {
       settlement_email: null,
       updated_at: new Date().toISOString(),
     });
+
+    // Invalidate user cache namespace
+    await ServiceCache.clear("svc:user");
 
     return {
       success: true,
