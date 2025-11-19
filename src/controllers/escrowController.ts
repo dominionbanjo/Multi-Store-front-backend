@@ -103,6 +103,6 @@ export const refundEscrow = async (req: CustomRequest, res: Response) => {
     success: true,
     idempotent: result.idempotent ?? false,
     message: result.message,
-    transfer_code: result.transfer_code ?? null,
+    reference: result.payout_reference ?? null,
   });
 };
