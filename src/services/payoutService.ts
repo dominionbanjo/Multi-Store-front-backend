@@ -7,6 +7,7 @@ import {
 } from "../config/db/models/PayoutModel.js";
 import { NotFoundError, BadRequestError } from "../utils/errors/customError.js";
 import { TransactionModel } from "../config/db/models/TransactionModel.js";
+import { ServiceCache } from "../utils/helpers/ServiceCache.js";
 
 /* ----------------------------------------- *
  *  Paystack Transfer Response Type
@@ -41,7 +42,7 @@ export interface ICreatePendingPayout {
 }
 
 /* ----------------------------------------- *
- *  PayoutService With Type Safety
+ *  PayoutService With Caching
  * ----------------------------------------- */
 class PayoutService {
   /* ----------------------- CREATE PENDING PAYOUT ----------------------- */
@@ -71,6 +72,8 @@ class PayoutService {
       updated_at: new Date().toISOString(),
     });
 
+    await ServiceCache.clear("svc:payout");
+
     await TransactionModel.create({
       id: uuidv4(),
       order_id,
@@ -92,12 +95,24 @@ class PayoutService {
     return payout;
   }
 
-  /* ----------------------- FIND BY TRANSFER CODE ----------------------- */
+  /* ----------------------- FIND BY TRANSFER CODE (CACHED) ----------------------- */
   static async findByTransferCode(
     transfer_code: string
   ): Promise<IPayout | null> {
     if (!transfer_code) throw new BadRequestError("transfer_code required");
-    return await PayoutModel.findOne({ transfer_code });
+
+    const key = ServiceCache.key("payout", "single", transfer_code);
+
+    const cached = await ServiceCache.get<IPayout>(key);
+    if (cached) return cached;
+
+    const payout = await PayoutModel.findOne({ transfer_code });
+
+    if (payout) {
+      await ServiceCache.set(key, payout);
+    }
+
+    return payout;
   }
 
   /* ----------------------- MARK SUCCESS ----------------------- */
@@ -115,6 +130,8 @@ class PayoutService {
       metadata: { ...(payout.metadata || {}), webhook: payload },
       updated_at: new Date().toISOString(),
     });
+
+    await ServiceCache.clear("svc:payout");
 
     await TransactionModel.create({
       id: uuidv4(),
@@ -149,6 +166,8 @@ class PayoutService {
       updated_at: new Date().toISOString(),
     });
 
+    await ServiceCache.clear("svc:payout");
+
     await TransactionModel.create({
       id: uuidv4(),
       order_id: payout.order_id,
@@ -181,6 +200,8 @@ class PayoutService {
       metadata: { ...(payout.metadata || {}), webhook: payload },
       updated_at: new Date().toISOString(),
     });
+
+    await ServiceCache.clear("svc:payout");
 
     await TransactionModel.create({
       id: uuidv4(),

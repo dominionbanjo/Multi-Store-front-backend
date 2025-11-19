@@ -2,15 +2,27 @@ import { WishlistModel, IWishlist } from "../config/db/models/WishlistModel.js";
 import { BadRequestError, NotFoundError } from "../utils/errors/customError.js";
 import { v4 as uuidv4 } from "uuid";
 import ProductService from "./productsService.js";
+import { ServiceCache } from "../utils/helpers/ServiceCache.js";
 
 /**
  * 💖 Wishlist Service
  * Handles add, remove, list, and clear wishlist logic.
+ * (Now fully cached — same pattern as CartService)
  */
 class WishlistService {
-  /** 🧾 Get all wishlist items for a user */
+  // ───────────────────────────────────────────────
+  // 📄 GET WISHLIST (CACHED)
+  // ───────────────────────────────────────────────
   static async getWishlist(userId: string) {
     if (!userId) throw new BadRequestError("User ID is required");
+
+    const key = ServiceCache.key("wishlist", "user", userId);
+
+    const cached = await ServiceCache.get<{
+      message: string;
+      wishlist: IWishlist[];
+    }>(key);
+    if (cached) return cached;
 
     const { data } = await WishlistModel.findAll({ user_id: userId });
 
@@ -20,13 +32,19 @@ class WishlistService {
         new Date(a.created_at ?? "").getTime()
     );
 
-    return {
+    const response = {
       message: "Wishlist retrieved successfully",
       wishlist: sorted,
     };
+
+    await ServiceCache.set(key, response);
+
+    return response;
   }
 
-  /** ➕ Add product to wishlist */
+  // ───────────────────────────────────────────────
+  // ➕ ADD TO WISHLIST → INVALIDATE CACHE
+  // ───────────────────────────────────────────────
   static async addToWishlist(
     userId: string,
     product: {
@@ -70,13 +88,18 @@ class WishlistService {
       updated_at: new Date().toISOString(),
     });
 
+    // Invalidate wishlist cache
+    await ServiceCache.clear("svc:wishlist");
+
     return {
       message: "Added to wishlist",
       wishlist: newItem,
     };
   }
 
-  /** 🗑️ Remove product from wishlist */
+  // ───────────────────────────────────────────────
+  // 🗑️ REMOVE FROM WISHLIST → INVALIDATE CACHE
+  // ───────────────────────────────────────────────
   static async removeFromWishlist(userId: string, productId: string) {
     if (!userId) throw new BadRequestError("User ID is required");
     if (!productId) throw new BadRequestError("Product ID is required");
@@ -90,14 +113,22 @@ class WishlistService {
 
     await WishlistModel.delete(existing.id);
 
+    // Invalidate cache
+    await ServiceCache.clear("svc:wishlist");
+
     return { message: "Product removed from wishlist" };
   }
 
-  /** ❌ Clear entire wishlist */
+  // ───────────────────────────────────────────────
+  // ❌ CLEAR WISHLIST → INVALIDATE CACHE
+  // ───────────────────────────────────────────────
   static async clearWishlist(userId: string) {
     if (!userId) throw new BadRequestError("User ID is required");
 
     const result = await WishlistModel.deleteWhere({ user_id: userId });
+
+    // Invalidate cache
+    await ServiceCache.clear("svc:wishlist");
 
     return {
       message: `Wishlist cleared (${result.count} item${
