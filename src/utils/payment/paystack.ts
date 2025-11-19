@@ -13,6 +13,14 @@ const headers = {
  * 🧾 Handle Paystack API errors gracefully
  */
 const handlePaystackError = (error: any, context: string) => {
+  // 🔥 Log FULL Paystack error response for debugging
+  console.error("🔥 PAYSTACK ERROR:", {
+    context,
+    status: error.response?.status,
+    data: error.response?.data,
+    message: error.message,
+  });
+
   const status = error.response?.status;
   const message =
     error.response?.data?.message ||
@@ -158,6 +166,8 @@ export const createTransferRecipient = async ({
 /**
  * 💸 Transfer funds from your Paystack balance to a vendor
  */
+import { v4 as uuidv4 } from "uuid";
+
 export const initiateTransfer = async ({
   recipient_code,
   amount,
@@ -172,6 +182,8 @@ export const initiateTransfer = async ({
       "Recipient code required before initiating transfer"
     );
 
+  const reference = `pay_${uuidv4().replace(/-/g, "")}`.toLowerCase();
+
   try {
     const res = await axios.post(
       `${PAYSTACK_BASE_URL}/transfer`,
@@ -180,12 +192,24 @@ export const initiateTransfer = async ({
         amount: Math.round(amount * 100),
         recipient: recipient_code,
         reason,
+        reference,
       },
       { headers }
     );
+
     console.log("Transfer carried");
-    return res.data?.data;
+
+    return {
+      ok: true,
+      ...res.data?.data,
+      reference,
+    };
   } catch (error: any) {
-    handlePaystackError(error, "Funds transfer");
+    // Return failure instead of throwing
+    return {
+      ok: false,
+      reference,
+      error: error.response?.data || error.message || "Unknown transfer error",
+    };
   }
 };
